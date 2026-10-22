@@ -21,7 +21,10 @@ export async function evaluateAction(
   request: EvaluateRequest,
   executeTool: ToolExecutor = executeSyntheticTool,
 ) {
-  const policy = evaluatePolicy(request);
+  const inspection = request.inspectionId
+    ? await persist(() => store.getInspection(request.inspectionId!))
+    : null;
+  const policy = evaluatePolicy({ ...request, inspection });
   const canonicalRequest = { ...request, resource: policy.normalizedResource };
   const advisory = await getRiskAdvisory(canonicalRequest);
   const approvalId = policy.decision === "REQUIRE_APPROVAL" ? createApprovalId() : null;
@@ -31,6 +34,8 @@ export async function evaluateAction(
     ruleId: policy.ruleId,
     reason: policy.reason,
     approvalId,
+    inspectionId: request.inspectionId,
+    destination: request.destination,
     advisory,
   });
 
@@ -42,6 +47,8 @@ export async function evaluateAction(
       agentId: request.agentId,
       tool: request.tool,
       resource: policy.normalizedResource,
+      ...(request.inspectionId ? { inspectionId: request.inspectionId } : {}),
+      ...(request.destination ? { destination: request.destination } : {}),
       status: "PENDING",
       createdAt: event.timestamp,
     };

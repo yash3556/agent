@@ -7,6 +7,12 @@ export const evaluateRequestSchema = z.object({
   tool: identifier,
   resource: z.string().trim().min(1).max(256),
   context: z.string().max(1000).optional(),
+  inspectionId: z.string().regex(/^ins_[A-Za-z0-9-]{16,64}$/).optional(),
+  destination: z.enum(["local", "external"]).optional(),
+});
+
+export const documentInspectFieldsSchema = z.object({
+  agentId: identifier,
 });
 
 export const approvalDecisionSchema = z.object({

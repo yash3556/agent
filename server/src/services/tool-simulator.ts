@@ -29,5 +29,27 @@ export const executeSyntheticTool: ToolExecutor = (action) => {
     };
   }
 
+  if (
+    action.tool === "analyze_document"
+    && /^ins_[A-Za-z0-9-]{16,64}$/.test(action.resource)
+  ) {
+    return {
+      tool: action.tool,
+      resource: action.resource,
+      result: "Synthetic local analysis completed.",
+    };
+  }
+
+  if (
+    action.tool === "export_report"
+    && /^ins_[A-Za-z0-9-]{16,64}$/.test(action.resource)
+  ) {
+    return {
+      tool: action.tool,
+      resource: action.resource,
+      result: "Synthetic export simulation completed; no external transfer occurred.",
+    };
+  }
+
   throw new Error("Synthetic operation is not whitelisted.");
 };

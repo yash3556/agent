@@ -1,9 +1,16 @@
 import { MongoClient, type Collection, type Db } from "mongodb";
-import type { Approval, AuditEvent, ApprovalStatus } from "../types.js";
+import type {
+  Approval,
+  AuditEvent,
+  ApprovalStatus,
+  InspectionRecord,
+} from "../types.js";
 
 export interface AuditStore {
   readonly mode: "mongodb" | "memory";
   isHealthy(): Promise<boolean>;
+  saveInspection(inspection: InspectionRecord): Promise<void>;
+  getInspection(inspectionId: string): Promise<InspectionRecord | null>;
   saveEvaluation(event: AuditEvent, approval?: Approval): Promise<void>;
   insertEvent(event: AuditEvent): Promise<void>;
   updateEvent(event: AuditEvent): Promise<void>;
@@ -24,9 +31,23 @@ export class MemoryAuditStore implements AuditStore {
   readonly mode = "memory" as const;
   private readonly events = new Map<string, AuditEvent>();
   private readonly approvals = new Map<string, Approval>();
+  private readonly inspections = new Map<string, InspectionRecord>();
 
   async isHealthy(): Promise<boolean> {
     return true;
+  }
+
+  async saveInspection(inspection: InspectionRecord): Promise<void> {
+    this.inspections.set(inspection.inspectionId, structuredClone(inspection));
+  }
+
+  async getInspection(inspectionId: string): Promise<InspectionRecord | null> {
+    const inspection = this.inspections.get(inspectionId);
+    if (!inspection || inspection.expiresAt.getTime() <= Date.now()) {
+      this.inspections.delete(inspectionId);
+      return null;
+    }
+    return structuredClone(inspection);
   }
 
   async saveEvaluation(event: AuditEvent, approval?: Approval): Promise<void> {
@@ -90,23 +111,53 @@ export class MongoAuditStore implements AuditStore {
   private readonly database: Db;
   private readonly eventCollection: Collection<AuditEvent>;
   private readonly approvalCollection: Collection<Approval>;
+  private readonly inspectionCollection: Collection<InspectionRecord>;
+  private indexPromise: Promise<void> | undefined;
 
   constructor(uri: string, databaseName: string) {
     this.client = new MongoClient(uri, { serverSelectionTimeoutMS: 1500 });
     this.database = this.client.db(databaseName);
     this.eventCollection = this.database.collection<AuditEvent>("audit_events");
     this.approvalCollection = this.database.collection<Approval>("approvals");
+    this.inspectionCollection = this.database.collection<InspectionRecord>("inspections");
+  }
+
+  async close(): Promise<void> {
+    await this.client.close();
+    this.connected = false;
+    this.indexPromise = undefined;
   }
 
   private async ensureConnected(): Promise<void> {
     try {
       await this.client.connect();
       await this.database.command({ ping: 1 });
+      this.indexPromise ??= this.inspectionCollection.createIndex(
+        { expiresAt: 1 },
+        { expireAfterSeconds: 0, name: "inspection_expiry_ttl" },
+      ).then(() => undefined);
+      await this.indexPromise;
       this.connected = true;
     } catch (error) {
       this.connected = false;
+      this.indexPromise = undefined;
       throw error;
     }
+  }
+
+  async saveInspection(inspection: InspectionRecord): Promise<void> {
+    await this.ensureConnected();
+    await this.inspectionCollection.insertOne({ ...inspection });
+  }
+
+  async getInspection(inspectionId: string): Promise<InspectionRecord | null> {
+    await this.ensureConnected();
+    const inspection = await this.inspectionCollection.findOne(
+      { inspectionId },
+      { projection: { _id: 0 } },
+    );
+    if (!inspection || inspection.expiresAt.getTime() <= Date.now()) return null;
+    return inspection;
   }
 
   async isHealthy(): Promise<boolean> {
@@ -120,10 +171,10 @@ export class MongoAuditStore implements AuditStore {
 
   async saveEvaluation(event: AuditEvent, approval?: Approval): Promise<void> {
     await this.ensureConnected();
-    await this.eventCollection.insertOne(event);
+    await this.eventCollection.insertOne({ ...event });
     if (approval) {
       try {
-        await this.approvalCollection.insertOne(approval);
+        await this.approvalCollection.insertOne({ ...approval });
       } catch (error) {
         await this.eventCollection.deleteOne({ eventId: event.eventId });
         throw error;
@@ -133,7 +184,7 @@ export class MongoAuditStore implements AuditStore {
 
   async insertEvent(event: AuditEvent): Promise<void> {
     await this.ensureConnected();
-    await this.eventCollection.insertOne(event);
+    await this.eventCollection.insertOne({ ...event });
   }
 
   async updateEvent(event: AuditEvent): Promise<void> {

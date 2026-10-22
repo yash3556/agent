@@ -19,6 +19,8 @@ export interface AuditEvent {
   reason: string;
   executed: boolean;
   approvalId: string | null;
+  inspectionId?: string | null;
+  destination?: "local" | "external" | null;
   advisory: Advisory | null;
   type: "EVALUATION" | "APPROVAL_DECISION";
   approvalStatus?: "APPROVED" | "REJECTED" | null;
@@ -32,11 +34,45 @@ export interface Approval {
   agentId: string;
   tool: string;
   resource: string;
+  inspectionId?: string;
+  destination?: "local" | "external";
   status: ApprovalStatus;
   createdAt: string;
   decidedAt?: string;
   reviewer?: string;
   note?: string;
+}
+
+export type FindingSeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type FindingCategory = "PERSONAL_DATA" | "CREDENTIAL" | "SUSPICIOUS_INSTRUCTION";
+
+export interface InspectionFinding {
+  id: string;
+  category: FindingCategory;
+  type: string;
+  severity: FindingSeverity;
+  confidence: number;
+  location: { page: number | null; line: number | null };
+  evidence: string;
+  description: string;
+}
+
+export interface InspectionRecord {
+  inspectionId: string;
+  agentId: string;
+  status: "COMPLETED" | "FAILED";
+  originalName: string;
+  mediaType: string;
+  sizeBytes: number;
+  sha256: string;
+  findings: InspectionFinding[];
+  summary: {
+    totalFindings: number;
+    truncated: boolean;
+    bySeverity: Record<FindingSeverity, number>;
+  };
+  createdAt: string;
+  expiresAt: Date;
 }
 
 export interface Scenario {

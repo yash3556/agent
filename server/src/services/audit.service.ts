@@ -3,6 +3,8 @@ import type { EvaluateRequest } from "../schemas/evaluate.schema.js";
 import type { Advisory, AuditEvent, Decision } from "../types.js";
 
 const sensitiveValuePatterns = [
+  /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+  /(?<!\d)(?:\+\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)/g,
   /\b(?:token|api[_-]?key|secret|password|credential)\s*[:=]\s*[^\s,;]+/gi,
   /\b(?:mongodb(?:\+srv)?|https?):\/\/[^\s]+/gi,
   /\b(?:bearer|basic)\s+[A-Za-z0-9._~+/-]+=*/gi,
@@ -23,6 +25,8 @@ export function createAuditEvent(input: {
   ruleId: string;
   reason: string;
   approvalId?: string | null;
+  inspectionId?: string | null;
+  destination?: "local" | "external";
   advisory?: Advisory | null;
   type?: "EVALUATION" | "APPROVAL_DECISION";
 }): AuditEvent {
@@ -37,6 +41,8 @@ export function createAuditEvent(input: {
     reason: input.reason,
     executed: false,
     approvalId: input.approvalId ?? null,
+    ...(input.inspectionId ? { inspectionId: input.inspectionId } : {}),
+    ...(input.destination ? { destination: input.destination } : {}),
     advisory: input.advisory ?? null,
     type: input.type ?? "EVALUATION",
   };

@@ -6,9 +6,9 @@ sole authority; AI advisory is optional and cannot authorize or execute actions.
 
 ## Backend development
 
-Requirements: Node.js 20+ and npm. MongoDB is required for persistent audit
-events and approvals. An explicitly configured in-memory store is available for
-development and tests; it is not persistent.
+Requirements: Node.js 22.13+ and npm. MongoDB is required for persistent audit
+events, approvals, and document inspection metadata. An explicitly configured
+in-memory store is available for development and tests; it is not persistent.
 
 ```powershell
 npm install
@@ -29,16 +29,45 @@ npm run build --workspace @agentshield/server
 npm run test --workspace @agentshield/server
 ```
 
+The normal test command skips live MongoDB integration tests unless
+`MONGODB_TEST_URI` is set. To run them against a local test database:
+
+```powershell
+$env:MONGODB_TEST_URI = 'mongodb://127.0.0.1:27017'
+npm run test --workspace @agentshield/server
+```
+
+The integration suite creates and drops uniquely named `agentshield_test_*`
+databases and requires permission to create/drop databases and apply temporary
+collection validators. Never point it at production data.
+
 The API listens on port 3001 by default and permits the configured
 `FRONTEND_ORIGIN` (default `http://localhost:5173`). See
 [docs/API_CONTRACT.md](docs/API_CONTRACT.md) for canonical v1.1 request,
-response, policy, approval, and error contracts.
+response, policy, approval, and error contracts. Document inspection is
+available at `POST /api/documents/inspect` for bounded PDF, DOCX, and UTF-8 TXT
+uploads. It returns redacted findings and does not persist raw document text.
 
 ## Current scope
 
 The backend exposes health, S1–S3 demo scenarios, action evaluation, audit
-events, and approval listing/decisions. Tools operate only on bounded synthetic
-data; they do not access the real filesystem, shell, or external network.
-No AI provider integration is included yet: advisory results are currently
-`null`, and AI reports disabled by default (or unavailable if a provider name
-is configured).
+events, approval listing/decisions, and document inspection/evaluation. The
+scanner uses bounded deterministic patterns, not a comprehensive DLP or
+malware scanner. Credential detection covers selected labeled key/value forms
+and an AWS-style access-key-like pattern; a bare secret-looking value or
+unrecognized format may not be detected. A clean scan is not proof a document
+is safe. Tools operate only on synthetic data; no real filesystem,
+shell, or external network execution is available. Document export is only a
+synthetic simulation and is blocked by default; findings may block or require
+approval. The demo `agentId` and reviewer labels are not authentication.
+
+Approval uses a conditional state transition to ensure only one competing
+request wins, but the transition, execution, and final audit update are not an
+atomic transaction. Execution outcome can be uncertain if the process fails
+between those steps. This workflow is not suitable for real side-effecting
+tools without stronger transactional or recovery design.
+
+No AI provider integration is included: advisory results are currently `null`,
+and AI reports disabled by default (or unavailable if a provider name is
+configured). The frontend remains scaffold-level and is not yet an integrated
+dashboard.

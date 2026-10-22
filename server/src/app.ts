@@ -6,6 +6,7 @@ import { ApiError } from "./errors.js";
 import { createApprovalsRouter } from "./routes/approvals.routes.js";
 import { createEvaluateRouter } from "./routes/evaluate.routes.js";
 import { createEventsRouter } from "./routes/events.routes.js";
+import { createDocumentsRouter } from "./routes/documents.routes.js";
 import type { Scenario } from "./types.js";
 import { executeSyntheticTool, type ToolExecutor } from "./services/tool-simulator.js";
 
@@ -62,6 +63,7 @@ export function createApp(store: AuditStore, options: AppOptions = {}) {
   });
 
   app.use("/api/evaluate", createEvaluateRouter(store, executeTool));
+  app.use("/api/documents", createDocumentsRouter(store));
   app.use("/api/events", createEventsRouter(store));
   app.use("/api/approvals", createApprovalsRouter(store, executeTool));
 

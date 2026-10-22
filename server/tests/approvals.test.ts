@@ -162,4 +162,26 @@ describe("approval workflow", () => {
     expect((await store.getApproval(evaluated.body.approvalId))?.status).toBe("PENDING");
     expect(executeTool).not.toHaveBeenCalled();
   });
+
+  it("does not execute when the approval transition fails after audit insertion", async () => {
+    class TransitionFailureStore extends MemoryAuditStore {
+      override async transitionApproval(): Promise<boolean> {
+        throw new Error("storage unavailable");
+      }
+    }
+
+    const store = new TransitionFailureStore();
+    const approvalId = await createPendingApproval(store);
+    const executeTool = vi.fn(executeSyntheticTool);
+    const response = await request(createApp(store, { executeTool }))
+      .post(`/api/approvals/${approvalId}/decision`)
+      .send({ decision: "APPROVED", reviewer: "demo-reviewer" });
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe("AUDIT_UNAVAILABLE");
+    expect((await store.getApproval(approvalId))?.status).toBe("PENDING");
+    expect((await store.listEvents(50)).filter((event) => event.type === "APPROVAL_DECISION"))
+      .toHaveLength(0);
+    expect(executeTool).not.toHaveBeenCalled();
+  });
 });

@@ -43,8 +43,24 @@ export async function decideApproval(
     throw new ApiError(409, "ALREADY_DECIDED", "Approval has already been decided.");
   }
 
-  const policy = evaluatePolicy({ tool: existing.tool, resource: existing.resource });
-  if (policy.decision !== "REQUIRE_APPROVAL" || policy.ruleId !== "R-004") {
+  const inspection = existing.inspectionId
+    ? await persist(() => store.getInspection(existing.inspectionId!))
+    : null;
+  const policy = evaluatePolicy({
+    tool: existing.tool,
+    resource: existing.resource,
+    agentId: existing.agentId,
+    ...(existing.inspectionId ? { inspectionId: existing.inspectionId } : {}),
+    ...(existing.destination ? { destination: existing.destination } : {}),
+    inspection,
+  });
+  if (
+    input.decision === "APPROVED"
+    && (policy.decision !== "REQUIRE_APPROVAL" || !["R-004", "R-009"].includes(policy.ruleId))
+  ) {
+    if (existing.inspectionId) {
+      throw new ApiError(409, "INSPECTION_UNAVAILABLE", "The inspected document is no longer eligible for export.");
+    }
     throw new ApiError(500, "INTERNAL_ERROR", "Stored approval is no longer permitted.");
   }
 
@@ -58,11 +74,15 @@ export async function decideApproval(
   const event = createAuditEvent({
     request,
     decision: "REQUIRE_APPROVAL",
-    ruleId: policy.ruleId,
+    ruleId: input.decision === "REJECTED"
+      ? existing.inspectionId ? "R-009" : "R-004"
+      : policy.ruleId,
     reason: input.decision === "APPROVED"
       ? "The demo reviewer approved the action."
       : "The demo reviewer rejected the action.",
     approvalId,
+    inspectionId: existing.inspectionId,
+    destination: existing.destination,
     type: "APPROVAL_DECISION",
   });
   event.approvalStatus = input.decision;
@@ -119,6 +139,8 @@ export async function decideApproval(
   const updatedApproval: Approval = {
     ...existing,
     status: input.decision,
+    ...(existing.inspectionId ? { inspectionId: existing.inspectionId } : {}),
+    ...(existing.destination ? { destination: existing.destination } : {}),
     decidedAt: event.timestamp,
     reviewer,
     ...(note === undefined ? {} : { note }),

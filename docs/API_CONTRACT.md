@@ -26,6 +26,8 @@ interface EvaluateRequest {
   tool: string;
   resource: string;
   context?: string;
+  inspectionId?: string;
+  destination?: "local" | "external";
 }
 
 interface AuditEvent {
@@ -39,6 +41,8 @@ interface AuditEvent {
   reason: string;
   executed: boolean;
   approvalId: string | null;
+  inspectionId?: string | null;
+  destination?: "local" | "external" | null;
   advisory: Advisory | null;
   type: "EVALUATION" | "APPROVAL_DECISION";
   approvalStatus?: "APPROVED" | "REJECTED" | null;
@@ -49,13 +53,30 @@ interface AuditEvent {
 interface Approval {
   approvalId: string;
   eventId: string;
+  agentId: string;
   tool: string;
   resource: string;
+  inspectionId?: string;
+  destination?: "local" | "external";
   status: ApprovalStatus;
   createdAt: string;
   decidedAt?: string;
   reviewer?: string;
   note?: string;
+}
+
+type FindingCategory = "PERSONAL_DATA" | "CREDENTIAL" | "SUSPICIOUS_INSTRUCTION";
+type FindingSeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+
+interface InspectionFinding {
+  id: string;
+  category: FindingCategory;
+  type: string;
+  severity: FindingSeverity;
+  confidence: number;
+  location: { page: number | null; line: number | null };
+  evidence: string;
+  description: string;
 }
 ```
 
@@ -142,12 +163,19 @@ until implemented; S1–S3 are required.
 
 - `agentId`: required trimmed string, 1–64 characters, identifier characters
   only.
-- `tool`: required well-formed identifier. `read_file` and `export_report` are
-  supported; other well-formed names are accepted and denied by policy.
+- `tool`: required well-formed identifier. `read_file`, `export_report`, and
+  `analyze_document` are supported; other well-formed names are accepted and
+  denied by policy.
 - `resource`: required string, 1–256 characters; decoded and normalized before
   policy evaluation.
 - `context`: optional string up to 1,000 characters. It is untrusted, never
   authorizes an operation, and is not stored raw.
+- `inspectionId`: optional server-issued identifier returned after successful
+  document inspection. Findings are always loaded from backend storage, never
+  accepted from the caller.
+- `destination`: optional `local` or `external` operation context. Document
+  actions require both fields and an inspection owned by the supplied demo
+  agent; a client-supplied `agentId` is not authenticated identity.
 - Unknown fields are stripped. Wrong types, missing fields, object-valued
   context, and malformed identifiers return 400.
 - JSON bodies are limited to 10 KB.
@@ -171,6 +199,60 @@ present: it is either `null` or `{ "riskLevel": "LOW|MEDIUM|HIGH|UNKNOWN",
 "signals": string[], "summary": string }`. `executed` is true only after the
 synthetic operation runs. It is always false for `BLOCK` and pending approval.
 Audit persistence must succeed before any operation executes.
+
+### `POST /api/documents/inspect`
+
+Accepts `multipart/form-data` with one `file` part and one `agentId` field.
+Supported file extensions and content types are PDF, DOCX, and UTF-8 TXT.
+Both the declared type and format signature/container are checked; the filename
+does not determine the security findings. Files are limited to 5 MiB, extracted
+text to 1 MiB, PDF documents to 100 pages, and DOCX archives to 500 entries /
+10 MiB expanded content. Unsupported, malformed, encrypted, macro-enabled,
+embedded, or over-limit documents fail closed.
+
+**201 response**
+
+```json
+{
+  "inspectionId": "ins_opaque",
+  "status": "COMPLETED",
+  "document": {
+    "originalName": "synthetic-contact.txt",
+    "mediaType": "text/plain",
+    "sizeBytes": 27
+  },
+  "findings": [{
+    "id": "finding_opaque",
+    "category": "PERSONAL_DATA",
+    "type": "EMAIL_ADDRESS",
+    "severity": "MEDIUM",
+    "confidence": 0.95,
+    "location": { "page": null, "line": 1 },
+    "evidence": "[REDACTED_EMAIL]",
+    "description": "An email address pattern was detected."
+  }],
+  "summary": {
+    "totalFindings": 1,
+    "truncated": false,
+    "bySeverity": { "LOW": 0, "MEDIUM": 1, "HIGH": 0, "CRITICAL": 0 }
+  },
+  "analysis": { "deterministic": "COMPLETED", "aiAdvisory": "DISABLED" }
+}
+```
+
+Only a hash, bounded metadata, owner agent ID, redacted findings, and expiry
+are persisted. Raw upload/extracted text is not stored. Inspection records
+expire after 24 hours; authorization checks expiry immediately, independent of
+MongoDB TTL cleanup timing. Finding reports are capped at 100 entries; if more
+are detected, `summary.truncated` is true and external export is blocked.
+AI is not sent uploaded content and remains disabled unless a separate
+advisory-only implementation is added.
+
+To use a report, submit `POST /api/evaluate` with `tool: "analyze_document"`,
+`destination: "local"`, and both `resource` and `inspectionId` set to the
+returned ID. External `export_report` actions require `destination: "external"`
+and are blocked by default; credential/suspicious findings or truncated reports
+block, and personal-data findings require approval.
 
 ### `GET /api/events`
 
@@ -229,12 +311,15 @@ demo label (not identity verification); `note` is optional and bounded.
 }
 ```
 
-Only `PENDING` approvals may transition once. A conditional status update must
-ensure concurrent requests cannot decide or execute twice. On approval, the
-backend re-checks that the stored tool/resource still match the explicit
-approval policy and executes only that original synthetic operation. On
-rejection, nothing executes. Persist the approval decision before execution and
-record its `APPROVAL_DECISION` audit event and execution outcome.
+Only `PENDING` approvals may transition once. The conditional status update
+allows only one concurrent request to win the state transition. It is **not**
+an atomic transaction spanning the audit event, approval state, operation
+execution, and final audit update. On approval, the backend re-checks the
+stored tool/resource and, for document operations, re-fetches the inspection
+before executing only the original bounded synthetic operation. On rejection,
+nothing executes. A process failure after transition can leave an approved
+record whose execution result is uncertain; this is not a guarantee suitable
+for real side-effecting tools.
 
 ## Policy rules
 
@@ -244,14 +329,22 @@ traversal checks run before any allow rule.
 | Rule | Condition | Decision | Reason |
 | --- | --- | --- | --- |
 | R-001 | Resource has traversal (`..`), is absolute (leading `/` or `\`, drive letter), contains NUL, or decodes to one of these | BLOCK | Path traversal is not permitted. |
+| R-005 | A document action has a missing, expired, incomplete, mismatched, or differently owned inspection | BLOCK | A completed inspection owned by this agent is required. |
+| R-006 | `demo-agent` runs `analyze_document` on its completed inspection with `destination=local` | ALLOW | Local analysis is synthetic; document instructions are untrusted data. |
+| R-007 | External export inspection includes a credential-like finding | BLOCK | Credential-like content must not be exported. |
+| R-008 | External export inspection includes a suspicious-instruction finding | BLOCK | Suspicious instructions must not be exported. |
+| R-010 | External export finding report is truncated | BLOCK | Incomplete findings cannot authorize external export. |
+| R-009 | External export inspection includes personal-data findings and no higher-priority block applies | REQUIRE_APPROVAL | Human review is required before export. |
 | R-002 | `tool=read_file` and normalized resource is exactly whitelisted `public/welcome.txt` under `public/` | ALLOW | The policy permits access to this public resource. |
 | R-003 | `tool=read_file` and resource starts with `private/` | BLOCK | The request has no authorization to access the private resource. |
 | R-004 | `tool=export_report` and resource is `sensitive-report` | REQUIRE_APPROVAL | The action is held until a human reviewer approves or rejects it. |
 | R-999 | Anything else, including unknown tools/resources | BLOCK | No policy permits this action (deny by default). |
 
-Only synthetic, whitelisted `read_file` and `export_report` operations exist.
-There is no real filesystem, shell, or external network execution. Context is
-untrusted data. AI cannot change a decision, authorize, or execute an action.
+For document actions, R-005 runs before document policy rules. R-007, R-008,
+and R-010 take precedence over R-009. Only bounded synthetic operations exist;
+document inspection does not add real filesystem, shell, or external network
+execution. Context and extracted document content are untrusted data. AI cannot
+change a decision, authorize, or execute an action.
 
 ## Audit and approval records
 
@@ -284,15 +377,49 @@ All errors use one envelope:
 | 400 | `VALIDATION_ERROR` | Invalid or missing fields/query values. |
 | 404 | `NOT_FOUND` | Unknown route or approval ID. |
 | 409 | `ALREADY_DECIDED` | Approval is already APPROVED or REJECTED. |
-| 413 | `PAYLOAD_TOO_LARGE` | Body exceeds 10 KB. |
+| 409 | `INSPECTION_UNAVAILABLE` | The inspection expired or is no longer eligible for approval. |
+| 413 | `PAYLOAD_TOO_LARGE` | JSON body exceeds 10 KB or upload exceeds 5 MiB. |
+| 415 | `UNSUPPORTED_MEDIA_TYPE` | Unsupported extension, declared type, or format signature. |
+| 422 | `DOCUMENT_UNREADABLE` | Empty, malformed, unsafe, or unsupported document structure. |
 | 500 | `INTERNAL_ERROR` | Unexpected error; do not leak internals. |
-| 503 | `AUDIT_UNAVAILABLE` | Audit persistence failed; no operation executed. |
+| 503 | `AUDIT_UNAVAILABLE` | Required audit/inspection persistence failed; no operation executed. |
+| 503 | `INSPECTION_UNAVAILABLE` | Parser capacity is full. |
 
-If MongoDB is unavailable or an audit write fails, evaluation returns
-`503 AUDIT_UNAVAILABLE` and executes nothing. An approval decision returns the
-same error without advancing state or executing. Health still returns 200 with
-`db: "error"`. AI absence, timeout, or invalid output never affects decisions;
-the response advisory is `null`.
+If MongoDB is unavailable or the initial required audit write fails,
+evaluation returns `503 AUDIT_UNAVAILABLE` and executes nothing. If an approval
+decision audit insert or conditional state transition fails before a successful
+transition, it returns `503 AUDIT_UNAVAILABLE` and does not execute. Failures
+after a successful transition are different: the record may already be
+APPROVED, and execution or its final audit update may have occurred or failed;
+the caller must inspect the approval and audit state rather than assume a
+retry is safe. The current tools are synthetic and bounded. Health still
+returns 200 with `db: "error"`. AI absence, timeout, or invalid output never
+affects decisions; the response advisory is `null`.
+
+Policy `reason` values are complete human-readable backend strings and include
+normal word spacing. Clients should display the returned value verbatim. For
+example, R-007 is “External export is prohibited because credential-like
+content was detected.”; R-009 is “External export of detected personal data
+requires human approval.”
+
+#### Current detector coverage (informational, not a security guarantee)
+
+The deterministic scanner currently detects email and phone-like patterns,
+selected labeled credential key/value patterns, one cloud access-key-like
+format, and selected suspicious-instruction phrases. For credentials, examples
+of supported labels are `api_key`, `access_token`, `password`, `passwd`,
+`secret`, and `client_secret`; values must contain at least six non-whitespace
+characters. It also checks an `AKIA` prefix followed by 16 uppercase
+alphanumeric characters. Bare secret-looking strings and other credential
+formats are not guaranteed to be detected. Use a labeled synthetic value such
+as `api_key=sample-secret-value` when demonstrating this detector.
+
+This is not comprehensive malware detection, DLP, or proof that a clean
+document is safe. `agentId` and `reviewer` are demo labels, not authenticated
+identities. Local MongoDB tests exercise persistence across fresh store
+instances and concurrent approval claims; they do not establish atomic
+approval-and-execution guarantees, production durability, or safe retries for
+real side effects.
 
 If a synthetic operation has already run but persisting its final execution
 outcome fails, return `500 INTERNAL_ERROR` rather than the fail-closed 503
