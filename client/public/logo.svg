@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AgentShield">
+  <path fill="#12313a" d="M32 4 56 13v17c0 15-10 25-24 30C18 55 8 45 8 30V13L32 4Z"/>
+  <path fill="none" stroke="#f5f4ef" stroke-linecap="round" stroke-linejoin="round" stroke-width="4" d="m21 32 7 7 15-16"/>
+</svg>

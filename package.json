@@ -1,0 +1,9 @@
+{
+  "name": "agentshield",
+  "private": true,
+  "workspaces": [
+    "client",
+    "server"
+  ]
+}
+
