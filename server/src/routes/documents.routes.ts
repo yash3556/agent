@@ -4,6 +4,8 @@ import type { AuditStore } from "../config/database.js";
 import { ApiError } from "../errors.js";
 import { documentInspectFieldsSchema } from "../schemas/evaluate.schema.js";
 import { inspectDocument, MAX_DOCUMENT_BYTES } from "../services/inspection.service.js";
+import { createConfiguredDocumentAnalyzer } from "../ai/document-analysis.js";
+import type { DocumentAnalyzer } from "../ai/document-analysis.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -16,7 +18,10 @@ const upload = multer({
   },
 });
 
-export function createDocumentsRouter(store: AuditStore): Router {
+export function createDocumentsRouter(
+  store: AuditStore,
+  documentAnalyzer: DocumentAnalyzer = createConfiguredDocumentAnalyzer(),
+): Router {
   const router = Router();
 
   router.post("/inspect", (request, response, next) => {
@@ -41,7 +46,9 @@ export function createDocumentsRouter(store: AuditStore): Router {
       if (!request.file) {
         throw new ApiError(400, "VALIDATION_ERROR", "A document file is required.");
       }
-      response.status(201).json(await inspectDocument(store, fields.data.agentId, request.file));
+      response.status(201).json(
+        await inspectDocument(store, fields.data.agentId, request.file, documentAnalyzer),
+      );
     } catch (error) {
       next(error);
     } finally {

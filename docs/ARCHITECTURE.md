@@ -39,6 +39,9 @@ the original approved operation. Rejection never executes.
   and summaries contain redacted evidence only.
 - `src/config/database.ts`: MongoDB persistence and explicitly selected
   in-memory development/test implementation, including expiring inspections.
+- `src/ai/document-analysis.ts`: optional OpenAI-compatible document-analysis
+  adapter, bounded chunking, output validation, and report coverage. AI findings
+  remain separate from deterministic policy inputs.
 - `src/ai/risk-advisor.ts`: optional advisory boundary; never authorizes or runs tools.
 
 MongoDB is selected with `STORAGE_MODE=mongodb`; the sample development
@@ -50,13 +53,17 @@ include the selected mode in the additive `storage` field.
 
 `POST /api/documents/inspect` accepts one file and `agentId`; the backend
 validates extension, declared media type, and content signature/container,
-then parses in a bounded worker. Only the document hash, sanitized filename,
-media type, size, server-side findings, and expiry are persisted. Raw file and
-extracted text are not stored. Evaluations accept a server-issued inspection
-ID and destination; they load findings from storage and check status, expiry,
-resource binding, and demo-agent ownership before policy evaluation. External
-export is synthetic only, blocked by default, and never contacts a remote
-destination.
+then parses in a bounded worker and runs deterministic scanning. When the
+OpenAI-compatible provider is explicitly enabled, redacted extracted content
+is analyzed in bounded chunks and validated into a separate advisory report.
+Only the document hash, sanitized filename, media type, deterministic findings,
+bounded sanitized report, and expiry are persisted. Raw file, extracted text,
+prompts, and raw provider responses are not stored. Evaluations accept a
+server-issued inspection ID and destination; they load deterministic findings
+from storage and check status, expiry, resource binding, and demo-agent
+ownership before policy evaluation. AI report findings are not policy inputs.
+External export is synthetic only, blocked by default, and never contacts a
+remote destination.
 
 ## Policy rules
 
@@ -72,15 +79,22 @@ for content findings, priority, and limitations.
 - No real filesystem, shell, or network tools exist.
 - Context is untrusted and is not persisted.
 - Document text is treated as untrusted data; prompt-like text never changes
-  the policy. Finding evidence is redacted, and incomplete reports cannot
-  authorize external export.
+  the policy. AI output is schema-validated, advisory only, and cannot override
+  a deterministic BLOCK, create approvals, or invoke tools. Finding evidence
+  is represented by page/line/chunk references, and incomplete coverage is
+  explicitly reported.
 - Credential detection covers a limited set of labeled key/value patterns and
   one AWS-style access-key-like format. It does not detect every secret format;
   a bare secret-looking string may not produce a finding. The scanner is not
   comprehensive malware detection or a complete DLP system.
 - Demo ownership uses a caller-supplied `agentId`; this is not authentication.
 - Audit resource, reviewer label, and reviewer note values are redacted.
-- AI failures or missing configuration do not affect policy decisions.
+- AI is disabled by default. Provider failures or missing configuration do not
+  affect deterministic policy decisions. When enabled, only bounded extracted
+  text with heuristic email/phone/credential redaction is sent to the
+  configured provider; redaction is not comprehensive. HTTPS, public DNS
+  destinations, and pinned addresses are required, redirects are not followed,
+  and loopback requires explicit opt-in.
 - CORS is restricted to `FRONTEND_ORIGIN`; JSON bodies are limited to 10 KB.
 - Approval reviewer labels are for the demo only, not authentication or
   production authorization.

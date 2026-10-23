@@ -4,6 +4,7 @@ import type {
   FindingSeverity,
   InspectionFinding,
 } from "../types.js";
+import { redact } from "./audit.service.js";
 
 export interface TextSegment {
   text: string;
@@ -76,10 +77,19 @@ export interface ScanSummary {
 
 export interface ScanResult {
   findings: InspectionFinding[];
+  findingSegments: number[];
   summary: ScanSummary;
 }
 
 const MAX_REPORTED_FINDINGS = 100;
+
+export function redactSensitiveText(text: string): string {
+  return detectors.reduce((safe, detector) => {
+    if (detector.category === "SUSPICIOUS_INSTRUCTION") return safe;
+    const expression = new RegExp(detector.expression.source, detector.expression.flags);
+    return safe.replace(expression, detector.evidence);
+  }, redact(text));
+}
 
 export function scanText(segments: TextSegment[]): ScanResult {
   const findings: InspectionFinding[] = [];
@@ -90,8 +100,9 @@ export function scanText(segments: TextSegment[]): ScanResult {
     CRITICAL: 0,
   };
   let totalFindings = 0;
+  const findingSegments: number[] = [];
 
-  for (const segment of segments) {
+  segments.forEach((segment, segmentIndex) => {
     const lines = segment.text.split(/\r\n|\r|\n/);
     lines.forEach((line, lineIndex) => {
       for (const detector of detectors) {
@@ -113,13 +124,15 @@ export function scanText(segments: TextSegment[]): ScanResult {
             evidence: detector.evidence,
             description: detector.description,
           });
+          findingSegments.push(segmentIndex);
         }
       }
     });
-  }
+  });
 
   return {
     findings,
+    findingSegments,
     summary: {
       totalFindings,
       truncated: totalFindings > MAX_REPORTED_FINDINGS,

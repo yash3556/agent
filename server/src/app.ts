@@ -9,6 +9,7 @@ import { createEventsRouter } from "./routes/events.routes.js";
 import { createDocumentsRouter } from "./routes/documents.routes.js";
 import type { Scenario } from "./types.js";
 import { executeSyntheticTool, type ToolExecutor } from "./services/tool-simulator.js";
+import type { DocumentAnalyzer } from "./ai/document-analysis.js";
 
 const scenarios: Scenario[] = [
   {
@@ -31,6 +32,7 @@ const scenarios: Scenario[] = [
 export interface AppOptions {
   frontendOrigin?: string;
   executeTool?: ToolExecutor;
+  documentAnalyzer?: DocumentAnalyzer;
 }
 
 export function createApp(store: AuditStore, options: AppOptions = {}) {
@@ -63,7 +65,7 @@ export function createApp(store: AuditStore, options: AppOptions = {}) {
   });
 
   app.use("/api/evaluate", createEvaluateRouter(store, executeTool));
-  app.use("/api/documents", createDocumentsRouter(store));
+  app.use("/api/documents", createDocumentsRouter(store, options.documentAnalyzer));
   app.use("/api/events", createEventsRouter(store));
   app.use("/api/approvals", createApprovalsRouter(store, executeTool));
 

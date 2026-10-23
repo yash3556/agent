@@ -7,6 +7,8 @@ import type { DocumentFormat } from "./document-parser.js";
 import { extractDocumentText } from "./document-parser.js";
 import { scanText } from "./content-scanner.js";
 import type { InspectionRecord } from "../types.js";
+import { createConfiguredDocumentAnalyzer } from "../ai/document-analysis.js";
+import type { DocumentAnalyzer } from "../ai/document-analysis.js";
 
 export const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
 const INSPECTION_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -61,13 +63,15 @@ export async function inspectDocument(
   store: AuditStore,
   agentId: string,
   file: Express.Multer.File,
+  documentAnalyzer: DocumentAnalyzer = createConfiguredDocumentAnalyzer(),
 ): Promise<{
   inspectionId: string;
   status: "COMPLETED";
   document: { originalName: string; mediaType: string; sizeBytes: number };
   findings: InspectionRecord["findings"];
   summary: InspectionRecord["summary"];
-  analysis: { deterministic: "COMPLETED"; aiAdvisory: "DISABLED" | "UNAVAILABLE" };
+  analysis: { deterministic: "COMPLETED"; aiAdvisory: "DISABLED" | "UNAVAILABLE" | "AVAILABLE" };
+  report: NonNullable<InspectionRecord["report"]>;
 }> {
   if (!file.buffer.length) {
     throw new ApiError(422, "DOCUMENT_UNREADABLE", "Empty documents cannot be inspected.");
@@ -79,6 +83,12 @@ export async function inspectDocument(
   const { format, mediaType } = detectFormat(file);
   const segments = await extractDocumentText(format, file.buffer);
   const scan = scanText(segments);
+  const analysis = await documentAnalyzer.analyze(
+    segments,
+    scan.findings,
+    scan.summary,
+    scan.findingSegments,
+  );
   const now = new Date();
   const safeName = safeFilename(file.originalname, format);
   const record: InspectionRecord = {
@@ -91,6 +101,7 @@ export async function inspectDocument(
     sha256: createHash("sha256").update(file.buffer).digest("hex"),
     findings: scan.findings,
     summary: scan.summary,
+    report: analysis.report,
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + INSPECTION_RETENTION_MS),
   };
@@ -101,9 +112,6 @@ export async function inspectDocument(
     throw new AuditUnavailableError();
   }
 
-  const aiStatus = process.env.AI_PROVIDER && process.env.AI_PROVIDER !== "disabled"
-    ? "UNAVAILABLE"
-    : "DISABLED";
   return {
     inspectionId: record.inspectionId,
     status: "COMPLETED",
@@ -114,6 +122,7 @@ export async function inspectDocument(
     },
     findings: record.findings,
     summary: record.summary,
-    analysis: { deterministic: "COMPLETED", aiAdvisory: aiStatus },
+    analysis: { deterministic: "COMPLETED", aiAdvisory: analysis.aiAdvisory },
+    report: analysis.report,
   };
 }

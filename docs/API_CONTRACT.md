@@ -1,10 +1,10 @@
 # AgentShield API Contract
 
-**Version:** 1.1  
+**Version:** 1.2
 **Status:** Canonical shared contract  
 **Base path:** `/api`
 
-This document mirrors the AgentShield Architecture & API Contract v1.1. It is
+This document mirrors the AgentShield Architecture & API Contract v1.2. It is
 the source of truth for endpoint paths, request and response fields, decision
 values, and scenario IDs. The backend owns policy decisions, approval state, and
 execution. The frontend displays backend results and never executes tools. AI is
@@ -103,7 +103,8 @@ unavailable.
 ```
 
 `db` is `"connected"` or `"error"`. `ai` is `"available"`, `"unavailable"`, or
-`"disabled"`. **[Additional field]** `storage` reports `"mongodb"` or
+`"disabled"` based on AI provider configuration; this does not mean a live
+provider request has been verified. **[Additional field]** `storage` reports `"mongodb"` or
 `"memory"` so clients can distinguish a working but non-persistent development
 store from MongoDB persistence. Do not expose connection strings or internal
 errors.
@@ -236,17 +237,80 @@ embedded, or over-limit documents fail closed.
     "truncated": false,
     "bySeverity": { "LOW": 0, "MEDIUM": 1, "HIGH": 0, "CRITICAL": 0 }
   },
-  "analysis": { "deterministic": "COMPLETED", "aiAdvisory": "DISABLED" }
+  "analysis": { "deterministic": "COMPLETED", "aiAdvisory": "DISABLED" },
+  "report": {
+    "version": 1,
+    "status": "DETERMINISTIC_ONLY",
+    "riskLevel": "MEDIUM",
+    "summary": "Deterministic scan reported 1 finding(s); AI analysis is disabled.",
+    "truncated": false,
+    "findings": [{
+      "id": "finding_opaque",
+      "source": "DETERMINISTIC",
+      "category": "PERSONAL_DATA",
+      "type": "EMAIL_ADDRESS",
+      "severity": "MEDIUM",
+      "confidence": 0.95,
+      "explanation": "An email address pattern was detected.",
+      "recommendation": "Minimize or redact personal data and verify that sharing is authorized.",
+      "evidenceReferences": [{ "page": null, "line": 1, "chunk": 1 }]
+    }],
+    "coverage": {
+      "extraction": "COMPLETED",
+      "deterministic": "COMPLETED",
+      "ai": "DISABLED",
+      "totalChunks": 1,
+      "completedChunks": 0,
+      "failedChunks": 0
+    }
+  }
 }
 ```
 
-Only a hash, bounded metadata, owner agent ID, redacted findings, and expiry
-are persisted. Raw upload/extracted text is not stored. Inspection records
-expire after 24 hours; authorization checks expiry immediately, independent of
-MongoDB TTL cleanup timing. Finding reports are capped at 100 entries; if more
-are detected, `summary.truncated` is true and external export is blocked.
-AI is not sent uploaded content and remains disabled unless a separate
-advisory-only implementation is added.
+All existing response fields retain their meanings. `analysis.aiAdvisory` is
+`DISABLED`, `UNAVAILABLE`, or `AVAILABLE`; it describes provider configuration,
+not whether every chunk was analyzed. The additive `report.status` is
+`COMPLETE` only when deterministic findings are not truncated and all AI chunks
+complete without report truncation; it is `DETERMINISTIC_ONLY` when AI is
+disabled or there is no extractable text to analyze; and it is `PARTIAL` when
+the provider is unavailable for non-empty content, chunks are incomplete, or a
+finding cap omits report findings. `report.truncated` is true when a finding
+cap omits report findings.
+Always use `report.coverage` to determine scan coverage. A top-level inspection
+`status: "COMPLETED"` means the inspection request finished; it does not mean
+the security report is complete.
+
+Report findings identify their `source` as `DETERMINISTIC` or `AI`. The legacy
+`findings` and `summary` fields remain deterministic-only. AI findings are
+advisory and are not policy inputs. Evidence references contain page, line, and
+chunk coordinates only; raw evidence quotes are not returned.
+
+Only a hash, bounded metadata, redacted deterministic findings, the bounded
+sanitized report, and expiry are persisted. Raw upload, extracted text,
+prompts, and raw provider responses are not stored. Inspection records expire
+after 24 hours; authorization checks expiry immediately, independent of
+MongoDB TTL cleanup timing. Deterministic findings are capped at 100 entries;
+if more are detected, `summary.truncated` is true and external export remains
+blocked by R-010. AI processing uses at most 128 chunks of 32 KiB each, two
+parallel requests per inspection and three concurrent provider requests
+process-wide, an 8-second request timeout, and a 30-second total time budget.
+Unprocessed or failed chunks are counted and reported as incomplete.
+
+AI is disabled by default. To opt in, set server-side `AI_PROVIDER` to
+`openai-compatible`, configure `AI_MODEL` and `AI_API_KEY`, and optionally set
+`AI_BASE_URL` (default `https://api.openai.com/v1`; `/chat/completions` is
+appended). The API key is never returned to clients or logged. `AI_BASE_URL`
+must use HTTPS to a public destination; DNS results are checked and pinned,
+private/non-public destinations are rejected, and redirects are not followed.
+HTTP/HTTPS loopback endpoints require the explicit `AI_ALLOW_LOOPBACK=true`
+setting and are intended only for trusted local development.
+
+When enabled, the configured external provider receives bounded chunks of
+extracted text after heuristic redaction of recognized email, phone, and
+credential patterns. No file bytes, filename, agent ID, or inspection ID are
+sent. Redaction is not comprehensive and cannot guarantee that every sensitive
+value is removed; the operator must assess provider retention and data-sharing
+terms before enabling it.
 
 To use a report, submit `POST /api/evaluate` with `tool: "analyze_document"`,
 `destination: "local"`, and both `resource` and `inspectionId` set to the

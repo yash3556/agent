@@ -1,0 +1,7 @@
+{
+  "agentId": "demo-agent",
+  "tool": "analyze_document",
+  "resource": "ins_2eb63314-5d12-42a8-8532-51b33c0cf4dd",
+  "inspectionId": "ins_2eb63314-5d12-42a8-8532-51b33c0cf4dd",
+  "destination": "local"
+}

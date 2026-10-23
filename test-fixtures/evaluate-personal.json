@@ -1,0 +1,7 @@
+{
+  "agentId": "demo-agent",
+  "tool": "export_report",
+  "resource": "ins_f4ca6e3d-5307-492e-993f-951da5e2c049",
+  "inspectionId": "ins_f4ca6e3d-5307-492e-993f-951da5e2c049",
+  "destination": "external"
+}

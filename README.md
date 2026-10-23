@@ -43,10 +43,11 @@ collection validators. Never point it at production data.
 
 The API listens on port 3001 by default and permits the configured
 `FRONTEND_ORIGIN` (default `http://localhost:5173`). See
-[docs/API_CONTRACT.md](docs/API_CONTRACT.md) for canonical v1.1 request,
+[docs/API_CONTRACT.md](docs/API_CONTRACT.md) for canonical v1.2 request,
 response, policy, approval, and error contracts. Document inspection is
 available at `POST /api/documents/inspect` for bounded PDF, DOCX, and UTF-8 TXT
-uploads. It returns redacted findings and does not persist raw document text.
+uploads. It returns deterministic findings and a structured security report
+without persisting raw document text.
 
 ## Current scope
 
@@ -67,7 +68,20 @@ atomic transaction. Execution outcome can be uncertain if the process fails
 between those steps. This workflow is not suitable for real side-effecting
 tools without stronger transactional or recovery design.
 
-No AI provider integration is included: advisory results are currently `null`,
-and AI reports disabled by default (or unavailable if a provider name is
-configured). The frontend remains scaffold-level and is not yet an integrated
-dashboard.
+Document inspection optionally supports an OpenAI-compatible Chat Completions
+provider. AI is disabled by default. To opt in, set `AI_PROVIDER=openai-compatible`,
+`AI_MODEL`, and `AI_API_KEY` in `server/.env`; `AI_BASE_URL` defaults to
+`https://api.openai.com/v1`. The adapter appends `/chat/completions`, validates
+HTTPS/public destinations, pins resolved addresses, rejects redirects, and
+permits loopback development URLs only with `AI_ALLOW_LOOPBACK=true`. Never
+expose or commit the API key.
+
+With AI enabled, bounded chunks of extracted text are sent to the configured
+provider after heuristic redaction of recognized email, phone, and credential
+patterns. No file bytes, filename, agent ID, or inspection ID are sent. This
+redaction is not comprehensive; enabling AI shares document content with that
+provider under its data-handling terms. Raw text and raw provider responses
+are not persisted. The report labels disabled or incomplete coverage and AI
+findings remain advisory; deterministic policy is still the sole authority.
+Tests mock the provider and do not verify a live external integration. The
+frontend remains scaffold-level and is not yet an integrated dashboard.

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import { MemoryAuditStore } from "../src/config/database.js";
 import { executeSyntheticTool } from "../src/services/tool-simulator.js";
+import { createDocumentAnalyzer } from "../src/ai/document-analysis.js";
 
 function crc32(data: Buffer): number {
   let crc = 0xffffffff;
@@ -327,5 +328,72 @@ describe("document inspection API", () => {
     });
     expect(response.body).toMatchObject({ decision: "BLOCK", ruleId: "R-010", executed: false });
     expect(executeTool).not.toHaveBeenCalled();
+  });
+
+  it("keeps AI findings advisory and never weakens deterministic policy blocks", async () => {
+    const store = new MemoryAuditStore();
+    const executeTool = vi.fn(executeSyntheticTool);
+    const documentAnalyzer = createDocumentAnalyzer({
+      async analyzeChunk(chunk) {
+        return [{
+          category: "CREDENTIAL",
+          type: "AI_CREDENTIAL_RISK",
+          severity: "CRITICAL",
+          confidence: 0.99,
+          explanation: "The excerpt may contain a credential.",
+          recommendation: "Review and rotate affected credentials.",
+          evidenceReferences: [{ page: null, line: 1 }],
+        }];
+      },
+    });
+    const app = createApp(store, { executeTool, documentAnalyzer });
+
+    const cleanInspection = await request(app).post("/api/documents/inspect")
+      .field("agentId", "demo-agent")
+      .attach("file", Buffer.from("ordinary content"), {
+        filename: "ordinary.txt",
+        contentType: "text/plain",
+      });
+    expect(cleanInspection.status).toBe(201);
+    expect(cleanInspection.body).toMatchObject({
+      analysis: { aiAdvisory: "AVAILABLE" },
+      report: { status: "COMPLETE", findings: [{ source: "AI", category: "CREDENTIAL" }] },
+      findings: [],
+    });
+
+    const aiOnlyExport = await request(app).post("/api/evaluate").send({
+      agentId: "demo-agent",
+      tool: "export_report",
+      resource: cleanInspection.body.inspectionId,
+      inspectionId: cleanInspection.body.inspectionId,
+      destination: "external",
+    });
+    expect(aiOnlyExport.body).toMatchObject({
+      decision: "BLOCK",
+      ruleId: "R-999",
+      executed: false,
+    });
+
+    const credentialInspection = await request(app).post("/api/documents/inspect")
+      .field("agentId", "demo-agent")
+      .attach("file", Buffer.from("api_key=sample-secret-value"), {
+        filename: "credential.txt",
+        contentType: "text/plain",
+      });
+    const deterministicBlock = await request(app).post("/api/evaluate").send({
+      agentId: "demo-agent",
+      tool: "export_report",
+      resource: credentialInspection.body.inspectionId,
+      inspectionId: credentialInspection.body.inspectionId,
+      destination: "external",
+    });
+    expect(deterministicBlock.body).toMatchObject({
+      decision: "BLOCK",
+      ruleId: "R-007",
+      executed: false,
+    });
+    expect(executeTool).not.toHaveBeenCalled();
+    expect(JSON.stringify(await store.getInspection(cleanInspection.body.inspectionId)))
+      .not.toContain("ordinary content");
   });
 });

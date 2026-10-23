@@ -57,6 +57,42 @@ export interface InspectionFinding {
   description: string;
 }
 
+export type DocumentReportStatus = "COMPLETE" | "DETERMINISTIC_ONLY" | "PARTIAL";
+export type DocumentReportSource = "DETERMINISTIC" | "AI";
+
+export interface DocumentReportFinding {
+  id: string;
+  source: DocumentReportSource;
+  category: string;
+  type: string;
+  severity: FindingSeverity;
+  confidence: number;
+  explanation: string;
+  recommendation: string;
+  evidenceReferences: Array<{
+    page: number | null;
+    line: number;
+    chunk: number | null;
+  }>;
+}
+
+export interface DocumentSecurityReport {
+  version: 1;
+  status: DocumentReportStatus;
+  riskLevel: FindingSeverity | "UNKNOWN";
+  summary: string;
+  truncated: boolean;
+  findings: DocumentReportFinding[];
+  coverage: {
+    extraction: "COMPLETED";
+    deterministic: "COMPLETED" | "INCOMPLETE";
+    ai: "COMPLETED" | "DISABLED" | "INCOMPLETE" | "UNAVAILABLE" | "NO_CONTENT";
+    totalChunks: number;
+    completedChunks: number;
+    failedChunks: number;
+  };
+}
+
 export interface InspectionRecord {
   inspectionId: string;
   agentId: string;
@@ -71,6 +107,7 @@ export interface InspectionRecord {
     truncated: boolean;
     bySeverity: Record<FindingSeverity, number>;
   };
+  report?: DocumentSecurityReport;
   createdAt: string;
   expiresAt: Date;
 }

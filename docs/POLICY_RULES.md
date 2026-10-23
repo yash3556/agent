@@ -22,11 +22,13 @@
   shell, or external-network access exists.
 - Document findings are generated server-side; callers cannot supply or modify
   trusted findings.
+- AI document-report findings are advisory only and are never policy inputs.
 - Current document actions require the `demo-agent` label. This is client
   supplied and is not authentication.
 - A clean scan permits local synthetic analysis only, not external export.
-- AI advisory output cannot change a decision, create approval, or invoke a
-  tool.
+- AI document-report findings cannot change a decision, create approval, or
+  invoke a tool. Only deterministic findings in the stored inspection record
+  are policy inputs.
 
 ## Evaluation order
 
@@ -105,7 +107,9 @@ Examples that must be blocked by R-001 include `../private/payroll.csv`,
   misleading pre-execution 503. This edge case is documented; adding
   side-effectful real tools requires a stronger transactional/outbox design.
 - AI unavailable, disabled, timed out, or invalid must not affect policy
-  decisions; current implementation returns `advisory: null`.
+  decisions. Document AI findings remain separate from deterministic findings;
+  AI can neither weaken a deterministic BLOCK nor authorize, approve, or execute
+  an action.
 - Policy reason strings are ordinary human-readable text with spaces. For
   example, R-007 returns “External export is prohibited because credential-like
   content was detected.” and R-009 returns “External export of detected
@@ -137,15 +141,24 @@ transactional execution or production durability.
   label or format is not guaranteed to produce a `CREDENTIAL` finding. This
   limitation is why a credential-only test must use a supported synthetic
   pattern, for example `api_key=sample-secret-value`.
-- At most 100 findings are returned. `summary.truncated` signals a larger set
-  and blocks external export.
+- The deterministic `findings` array is capped at 100 entries.
+  `summary.truncated` signals a larger detected set and blocks external export.
+  The AI report is independently capped at 100 AI findings; a report cap is
+  reflected by `report.truncated` and `report.status: "PARTIAL"`.
 - This scanner does not comprehensively identify malware, malicious files,
   obfuscated secrets, or all personal data. Successful parsing and no findings
   do not prove a document safe.
 - DOCX body paragraphs are inspected; unsupported embedded or macro content is
   rejected. PDF embedded files and non-text objects are not executed.
-- Uploaded content is not sent to an AI provider. AI remains disabled and
-  advisory-only.
+- AI remains disabled by default and advisory-only. If explicitly enabled,
+  bounded extracted text is sent to the configured OpenAI-compatible provider
+  after heuristic redaction of recognized email, phone, and credential
+  patterns. The file, filename, agent ID, and inspection ID are not sent. This
+  redaction is incomplete by nature; operators must assess provider retention
+  and data-sharing terms before enabling external analysis.
+- AI report status and chunk counts disclose disabled or incomplete AI
+  coverage. The deterministic scanner and existing policy evaluation remain
+  authoritative; AI findings are not used for export blocking or approval.
 - The `agentId` and reviewer label are caller-supplied demo values, not
   authenticated identities. Ownership matching is not authorization against a
   verified person or service.
