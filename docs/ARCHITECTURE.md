@@ -31,10 +31,12 @@ the original approved operation. Rejection never executes.
 - `src/services/approval.service.ts`: backend-owned approval transitions and execution.
 - `src/services/tool-simulator.ts`: bounded synthetic operations only.
 - `src/routes/documents.routes.ts` and
-  `src/services/inspection.service.ts`: bounded multipart upload, media/type
-  validation, transient parsing/scanning, redacted findings, and storage.
+  `src/services/inspection.service.ts`: admitted multipart upload, media/type
+  validation, transient parsing/scanning, redacted findings, storage, and an
+  informational audit event for every successful inspection.
 - `src/services/document-parser*.ts`: isolated worker parsing for PDF, DOCX,
-  and UTF-8 TXT with time, memory, page, entry, and expanded-size bounds.
+  UTF-8 TXT, CSV, JSON, Markdown, and XLSX with time, memory, concurrency,
+  extracted-text, page, sheet, archive-entry, and expanded-size bounds.
 - `src/services/content-scanner.ts`: deterministic pattern detectors; findings
   and summaries contain redacted evidence only.
 - `src/config/database.ts`: MongoDB persistence and explicitly selected
@@ -52,10 +54,15 @@ include the selected mode in the additive `storage` field.
 ## Document inspection flow
 
 `POST /api/documents/inspect` accepts one file and `agentId`; the backend
-validates extension, declared media type, and content signature/container,
-then parses in a bounded worker and runs deterministic scanning. When the
-OpenAI-compatible provider is explicitly enabled, redacted extracted content
-is analyzed in bounded chunks and validated into a separate advisory report.
+admits at most three concurrent inspections per process, validates extension,
+declared media type, and content signature/container, then parses in a bounded
+worker and runs deterministic scanning. Text uploads require valid UTF-8,
+JSON syntax and CSV quoting are checked, and XLSX workbook parts and worksheet
+references are validated. When the
+OpenAI-compatible provider is explicitly enabled, only bounded excerpts around
+deterministic findings are redacted and analyzed; the full extracted document
+is never sent. A counts-only structure summary accompanies those excerpts, and
+the validated result is a separate advisory report.
 Only the document hash, sanitized filename, media type, deterministic findings,
 bounded sanitized report, and expiry are persisted. Raw file, extracted text,
 prompts, and raw provider responses are not stored. Evaluations accept a
@@ -88,11 +95,16 @@ for content findings, priority, and limitations.
   a bare secret-looking string may not produce a finding. The scanner is not
   comprehensive malware detection or a complete DLP system.
 - Demo ownership uses a caller-supplied `agentId`; this is not authentication.
-- Audit resource, reviewer label, and reviewer note values are redacted.
+- One shared, pattern-based redaction utility is applied to recognized
+  sensitive values in AI excerpts, report output, filenames, resource fields,
+  reviewer labels, notes, and audit metadata. It covers the current scanner
+  formats, common connection strings, cloud-key-like tokens, and private-key
+  blocks; it does not guarantee removal of unknown or unrecognized secrets.
 - AI is disabled by default. Provider failures or missing configuration do not
-  affect deterministic policy decisions. When enabled, only bounded extracted
-  text with heuristic email/phone/credential redaction is sent to the
-  configured provider; redaction is not comprehensive. HTTPS, public DNS
+  affect deterministic policy decisions. When enabled, only bounded
+  finding-context excerpts with heuristic redaction are sent to the configured
+  provider; documents without deterministic finding context are not sent.
+  Redaction is not comprehensive. HTTPS, public DNS
   destinations, and pinned addresses are required, redirects are not followed,
   and loopback requires explicit opt-in.
 - CORS is restricted to `FRONTEND_ORIGIN`; JSON bodies are limited to 10 KB.

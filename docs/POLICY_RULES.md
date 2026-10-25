@@ -98,7 +98,9 @@ Examples that must be blocked by R-001 include `../private/payroll.csv`,
 - If the initial audit/approval persistence fails, return
   `503 AUDIT_UNAVAILABLE` and do not execute.
 - Never persist raw context or synthetic file contents. Redact secrets from
-  resource and reviewer note values.
+  resource and reviewer note values with the shared redaction utility before
+  persistence and API return. This is pattern-based and cannot guarantee
+  removal of unrecognized secret formats.
 - Persist only the upload hash, bounded file metadata, owner agent ID, redacted
   findings, and expiry for inspections; never persist raw upload or extracted
   text. Every policy read checks expiry independently of MongoDB TTL cleanup.
@@ -151,11 +153,16 @@ transactional execution or production durability.
 - DOCX body paragraphs are inspected; unsupported embedded or macro content is
   rejected. PDF embedded files and non-text objects are not executed.
 - AI remains disabled by default and advisory-only. If explicitly enabled,
-  bounded extracted text is sent to the configured OpenAI-compatible provider
-  after heuristic redaction of recognized email, phone, and credential
-  patterns. The file, filename, agent ID, and inspection ID are not sent. This
-  redaction is incomplete by nature; operators must assess provider retention
-  and data-sharing terms before enabling external analysis.
+  only bounded excerpts around deterministic findings, plus a counts-only
+  structure summary, are sent to the configured OpenAI-compatible provider.
+  Full extracted text, file bytes, filename, agent ID, and inspection ID are
+  not sent. Recognized email, phone, credential, connection-string, cloud-key,
+  and private-key values are replaced with typed placeholders. This
+  pattern-based redaction is incomplete by nature; unrecognized secrets and
+  confidential text may remain inside an allowed excerpt. Operators must
+  assess provider retention and data-sharing terms before enabling external
+  analysis. Documents with no deterministic finding context are not sent to
+  the provider and report `NO_FINDING_CONTEXT`.
 - AI report status and chunk counts disclose disabled or incomplete AI
   coverage. The deterministic scanner and existing policy evaluation remain
   authoritative; AI findings are not used for export blocking or approval.

@@ -2,15 +2,16 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import type { AuditStore } from "../config/database.js";
 import { ApiError, AuditUnavailableError } from "../errors.js";
-import { redact } from "./audit.service.js";
+import { redactSensitiveText } from "./redaction.js";
 import type { DocumentFormat } from "./document-parser.js";
 import { extractDocumentText } from "./document-parser.js";
+import { MAX_DOCUMENT_BYTES } from "./document-limits.js";
 import { scanText } from "./content-scanner.js";
 import type { InspectionRecord } from "../types.js";
 import { createConfiguredDocumentAnalyzer } from "../ai/document-analysis.js";
-import type { DocumentAnalyzer } from "../ai/document-analysis.js";
+import type { AIFailureDetails, DocumentAnalyzer } from "../ai/document-analysis.js";
 
-export const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
+export { MAX_DOCUMENT_BYTES } from "./document-limits.js";
 const INSPECTION_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 const acceptedMediaTypes: Record<DocumentFormat, string[]> = {
@@ -20,9 +21,20 @@ const acceptedMediaTypes: Record<DocumentFormat, string[]> = {
     "application/octet-stream",
   ],
   txt: ["text/plain", "application/octet-stream"],
+  csv: ["text/csv", "application/csv", "application/octet-stream"],
+  json: ["application/json", "text/json", "application/octet-stream"],
+  markdown: ["text/markdown", "text/x-markdown", "text/plain", "application/octet-stream"],
+  xlsx: [
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/octet-stream",
+  ],
 };
 
-function detectFormat(file: Express.Multer.File): { format: DocumentFormat; mediaType: string } {
+function detectFormat(file: Express.Multer.File): {
+  format: DocumentFormat;
+  mediaType: string;
+  extension: string;
+} {
   const extension = path.extname(path.win32.basename(file.originalname)).toLowerCase();
   let format: DocumentFormat;
   let mediaType: string;
@@ -41,22 +53,45 @@ function detectFormat(file: Express.Multer.File): { format: DocumentFormat; medi
   } else if (extension === ".txt") {
     format = "txt";
     mediaType = "text/plain";
+  } else if (extension === ".csv") {
+    format = "csv";
+    mediaType = "text/csv";
+  } else if (extension === ".json") {
+    format = "json";
+    mediaType = "application/json";
+  } else if (extension === ".md" || extension === ".markdown") {
+    format = "markdown";
+    mediaType = "text/markdown";
+  } else if (extension === ".xlsx") {
+    format = "xlsx";
+    mediaType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    if (file.buffer.subarray(0, 4).toString("hex") !== "504b0304") {
+      throw new ApiError(415, "UNSUPPORTED_MEDIA_TYPE", "File content does not match XLSX format.");
+    }
   } else {
-    throw new ApiError(415, "UNSUPPORTED_MEDIA_TYPE", "Only PDF, DOCX, and TXT files are supported.");
+    throw new ApiError(
+      415,
+      "UNSUPPORTED_MEDIA_TYPE",
+      "Only PDF, DOCX, TXT, CSV, JSON, Markdown, and XLSX files are supported.",
+    );
   }
 
-  const declaredType = file.mimetype.toLowerCase();
+  const declaredType = file.mimetype.toLowerCase().split(";")[0].trim();
   if (!acceptedMediaTypes[format].includes(declaredType)) {
     throw new ApiError(415, "UNSUPPORTED_MEDIA_TYPE", "Declared media type does not match the supported format.");
   }
-  return { format, mediaType };
+  return { format, mediaType, extension: format === "markdown" ? "md" : format };
 }
 
-function safeFilename(originalName: string, format: DocumentFormat): string {
-  const basename = path.win32.basename(originalName).replace(/[\u0000-\u001f\u007f]/g, "");
-  const stem = redact(path.win32.parse(basename).name);
+function safeFilename(originalName: string, extension: string): string {
+  const basename = path.win32.basename(originalName.normalize("NFKC"))
+    .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, "");
+  const stem = redactSensitiveText(path.win32.parse(basename).name)
+    .replace(/[<>:"|?*]/g, "_")
+    .replace(/[. ]+$/g, "")
+    .trim();
   const limitedStem = [...stem].slice(0, 120).join("");
-  return `${limitedStem || "document"}.${format}`;
+  return `${limitedStem || "document"}.${extension}`;
 }
 
 export async function inspectDocument(
@@ -70,7 +105,11 @@ export async function inspectDocument(
   document: { originalName: string; mediaType: string; sizeBytes: number };
   findings: InspectionRecord["findings"];
   summary: InspectionRecord["summary"];
-  analysis: { deterministic: "COMPLETED"; aiAdvisory: "DISABLED" | "UNAVAILABLE" | "AVAILABLE" };
+  analysis: {
+    deterministic: "COMPLETED";
+    aiAdvisory: "DISABLED" | "UNAVAILABLE" | "AVAILABLE" | "NOT_NEEDED";
+    aiFailure?: AIFailureDetails;
+  };
   report: NonNullable<InspectionRecord["report"]>;
 }> {
   if (!file.buffer.length) {
@@ -80,7 +119,7 @@ export async function inspectDocument(
     throw new ApiError(413, "PAYLOAD_TOO_LARGE", "Document exceeds the 5 MiB limit.");
   }
 
-  const { format, mediaType } = detectFormat(file);
+  const { format, mediaType, extension } = detectFormat(file);
   const segments = await extractDocumentText(format, file.buffer);
   const scan = scanText(segments);
   const analysis = await documentAnalyzer.analyze(
@@ -88,9 +127,10 @@ export async function inspectDocument(
     scan.findings,
     scan.summary,
     scan.findingSegments,
+    scan.findingLocations,
   );
   const now = new Date();
-  const safeName = safeFilename(file.originalname, format);
+  const safeName = safeFilename(file.originalname, extension);
   const record: InspectionRecord = {
     inspectionId: `ins_${randomUUID()}`,
     agentId,
@@ -108,7 +148,31 @@ export async function inspectDocument(
 
   try {
     await store.saveInspection(record);
+    await store.insertEvent({
+      eventId: `evt_${randomUUID()}`,
+      timestamp: now.toISOString(),
+      agentId,
+      tool: "inspect_document",
+      resource: record.inspectionId,
+      decision: "INSPECTED",
+      ruleId: "DOC-001",
+      reason: `Document inspection completed with ${analysis.report.findings.length} reported finding(s); no action was authorized.`,
+      executed: false,
+      approvalId: null,
+      inspectionId: record.inspectionId,
+      advisory: null,
+      type: "DOCUMENT_INSPECTION",
+      documentName: safeName,
+      findingCount: analysis.report.findings.length,
+      reportRiskLevel: analysis.report.riskLevel,
+      reportStatus: analysis.report.status,
+    });
   } catch {
+    try {
+      await store.deleteInspection(record.inspectionId);
+    } catch {
+      console.error("Could not clean up a failed document inspection.");
+    }
     throw new AuditUnavailableError();
   }
 
@@ -122,7 +186,11 @@ export async function inspectDocument(
     },
     findings: record.findings,
     summary: record.summary,
-    analysis: { deterministic: "COMPLETED", aiAdvisory: analysis.aiAdvisory },
+    analysis: {
+      deterministic: "COMPLETED",
+      aiAdvisory: analysis.aiAdvisory,
+      ...(analysis.aiFailure ? { aiFailure: analysis.aiFailure } : {}),
+    },
     report: analysis.report,
   };
 }

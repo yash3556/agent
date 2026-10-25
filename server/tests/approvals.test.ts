@@ -59,16 +59,30 @@ describe("approval workflow", () => {
 
     const rejected = await request(app).post(`/api/approvals/${approvalId}/decision`).send({
       decision: "REJECTED",
-      reviewer: "demo-reviewer",
-      note: "api_key=sample-secret-value",
+      reviewer: "sentinel.reviewer@example.test",
+      note: "db=mongodb://user:sentinel-approval-password@db.example.test/app; api_key=sentinel-approval-key",
     });
     expect(rejected.status).toBe(200);
     expect(rejected.body).toMatchObject({
-      approval: { status: "REJECTED", note: "[REDACTED]" },
+      approval: {
+        status: "REJECTED",
+        reviewer: "[REDACTED_EMAIL]",
+        note: "db=[REDACTED_CONNECTION_STRING]; [REDACTED_CREDENTIAL]",
+      },
       executed: false,
     });
-    expect(JSON.stringify(await store.listEvents(50))).not.toContain("sample-secret-value");
-    expect(JSON.stringify(await store.listApprovals())).not.toContain("sample-secret-value");
+    const persistedValues = JSON.stringify({
+      body: rejected.body,
+      events: await store.listEvents(50),
+      approvals: await store.listApprovals(),
+      eventAPI: (await request(app).get("/api/events")).body,
+      approvalAPI: (await request(app).get("/api/approvals")).body,
+    });
+    expect(persistedValues).not.toContain("sentinel.reviewer@example.test");
+    expect(persistedValues).not.toContain("sentinel-approval-password");
+    expect(persistedValues).not.toContain("sentinel-approval-key");
+    expect(persistedValues).toContain("[REDACTED_CONNECTION_STRING]");
+    expect(persistedValues).toContain("[REDACTED_CREDENTIAL]");
     expect(executeTool).not.toHaveBeenCalled();
 
     const repeated = await request(app).post(`/api/approvals/${approvalId}/decision`).send({
@@ -78,6 +92,25 @@ describe("approval workflow", () => {
     expect(repeated.status).toBe(409);
     expect(repeated.body.error).toBe("ALREADY_DECIDED");
     expect(executeTool).not.toHaveBeenCalled();
+  });
+
+  it("redacts sensitive values in resource fields before audit persistence", async () => {
+    const store = new MemoryAuditStore();
+    const app = createApp(store);
+    const response = await request(app).post("/api/evaluate").send({
+      agentId: "demo-agent",
+      tool: "export_report",
+      resource: "unapproved; api_key=sentinel-resource-secret",
+    });
+    expect(response.status).toBe(200);
+    expect(response.body.decision).toBe("BLOCK");
+
+    const persistedValues = JSON.stringify({
+      events: await store.listEvents(50),
+      eventAPI: (await request(app).get("/api/events")).body,
+    });
+    expect(persistedValues).not.toContain("sentinel-resource-secret");
+    expect(persistedValues).toContain("[REDACTED_CREDENTIAL]");
   });
 
   it("allows only one concurrent approval decision to execute", async () => {

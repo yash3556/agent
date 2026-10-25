@@ -4,8 +4,11 @@ import type { AuditStore } from "../config/database.js";
 import { ApiError } from "../errors.js";
 import { documentInspectFieldsSchema } from "../schemas/evaluate.schema.js";
 import { inspectDocument, MAX_DOCUMENT_BYTES } from "../services/inspection.service.js";
+import { MAX_CONCURRENT_DOCUMENT_INSPECTIONS } from "../services/document-limits.js";
 import { createConfiguredDocumentAnalyzer } from "../ai/document-analysis.js";
 import type { DocumentAnalyzer } from "../ai/document-analysis.js";
+
+let activeInspections = 0;
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -25,8 +28,25 @@ export function createDocumentsRouter(
   const router = Router();
 
   router.post("/inspect", (request, response, next) => {
+    if (activeInspections >= MAX_CONCURRENT_DOCUMENT_INSPECTIONS) {
+      next(new ApiError(503, "INSPECTION_UNAVAILABLE", "Document inspection capacity is full."));
+      return;
+    }
+    activeInspections += 1;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      activeInspections -= 1;
+    };
+    response.locals.releaseDocumentAdmission = release;
+    request.once("aborted", release);
+    next();
+  }, (request, response, next) => {
+    const release = response.locals.releaseDocumentAdmission as (() => void) | undefined;
     upload.single("file")(request, response, (error: unknown) => {
       if (error && error instanceof multer.MulterError) {
+        release?.();
         const status = error.code === "LIMIT_FILE_SIZE" ? 413 : 400;
         const code = status === 413 ? "PAYLOAD_TOO_LARGE" : "VALIDATION_ERROR";
         next(new ApiError(status, code, status === 413
@@ -34,10 +54,12 @@ export function createDocumentsRouter(
           : "Multipart document request is invalid."));
         return;
       }
+      if (error) release?.();
       next(error);
     });
   }, async (request, response, next) => {
     const buffer = request.file?.buffer;
+    const release = response.locals.releaseDocumentAdmission as (() => void) | undefined;
     try {
       const fields = documentInspectFieldsSchema.safeParse(request.body);
       if (!fields.success) {
@@ -53,6 +75,7 @@ export function createDocumentsRouter(
       next(error);
     } finally {
       buffer?.fill(0);
+      release?.();
     }
   });
 

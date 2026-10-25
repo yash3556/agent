@@ -36,7 +36,7 @@ interface AuditEvent {
   agentId: string;
   tool: string;
   resource: string;
-  decision: Decision;
+  decision: Decision | "INSPECTED";
   ruleId: string;
   reason: string;
   executed: boolean;
@@ -44,7 +44,11 @@ interface AuditEvent {
   inspectionId?: string | null;
   destination?: "local" | "external" | null;
   advisory: Advisory | null;
-  type: "EVALUATION" | "APPROVAL_DECISION";
+  type: "EVALUATION" | "APPROVAL_DECISION" | "DOCUMENT_INSPECTION";
+  documentName?: string;
+  findingCount?: number;
+  reportRiskLevel?: FindingSeverity | "UNKNOWN";
+  reportStatus?: "COMPLETE" | "DETERMINISTIC_ONLY" | "PARTIAL";
   approvalStatus?: "APPROVED" | "REJECTED" | null;
   reviewer?: string | null;
   note?: string | null;
@@ -102,9 +106,10 @@ unavailable.
 }
 ```
 
-`db` is `"connected"` or `"error"`. `ai` is `"available"`, `"unavailable"`, or
-`"disabled"` based on AI provider configuration; this does not mean a live
-provider request has been verified. **[Additional field]** `storage` reports `"mongodb"` or
+`db` is `"connected"` or `"error"`. `ai` is `"configured"`, `"unavailable"`, or
+`"disabled"` based on local AI provider configuration. `"configured"` does not
+mean a live provider request has succeeded; AI completion is reported per
+inspection. **[Additional field]** `storage` reports `"mongodb"` or
 `"memory"` so clients can distinguish a working but non-persistent development
 store from MongoDB persistence. Do not expose connection strings or internal
 errors.
@@ -204,12 +209,16 @@ Audit persistence must succeed before any operation executes.
 ### `POST /api/documents/inspect`
 
 Accepts `multipart/form-data` with one `file` part and one `agentId` field.
-Supported file extensions and content types are PDF, DOCX, and UTF-8 TXT.
-Both the declared type and format signature/container are checked; the filename
-does not determine the security findings. Files are limited to 5 MiB, extracted
-text to 1 MiB, PDF documents to 100 pages, and DOCX archives to 500 entries /
-10 MiB expanded content. Unsupported, malformed, encrypted, macro-enabled,
-embedded, or over-limit documents fail closed.
+Supported file extensions and content types are PDF, DOCX, UTF-8 TXT, CSV,
+JSON, Markdown (`.md` or `.markdown`), and XLSX. The declared type and file
+contents/container structure are checked; text formats require valid UTF-8,
+JSON must parse, and CSV quoting must be well formed. The filename does not
+determine the security findings. Files are limited to 5 MiB, extracted text
+to 1 MiB, PDF documents to 100 pages, and DOCX/XLSX archives to 500 entries /
+10 MiB expanded content; XLSX is limited to 100 worksheets. At most three
+inspections per server process are admitted concurrently. Unsupported,
+malformed, encrypted, macro-enabled, embedded, or over-limit documents fail
+closed.
 
 **201 response**
 
@@ -267,12 +276,27 @@ embedded, or over-limit documents fail closed.
 }
 ```
 
-All existing response fields retain their meanings. `analysis.aiAdvisory` is
-`DISABLED`, `UNAVAILABLE`, or `AVAILABLE`; it describes provider configuration,
-not whether every chunk was analyzed. The additive `report.status` is
+`analysis.aiAdvisory` is `DISABLED`, `UNAVAILABLE`, `AVAILABLE`, or
+`NOT_NEEDED`. `AVAILABLE` means all submitted AI chunks completed successfully;
+`NOT_NEEDED` means no provider call was made because no deterministic finding
+context was available. An incomplete request is `UNAVAILABLE`. When AI analysis fails, the response
+includes a sanitized `analysis.aiFailure` with a stable `code` and actionable
+`message`. Supported codes include `AUTHENTICATION_FAILED`, `ACCESS_DENIED`,
+`MODEL_OR_ENDPOINT_NOT_FOUND`, `RATE_LIMITED`, `PROVIDER_ERROR`, `TIMEOUT`,
+`INVALID_RESPONSE`, `CONNECTION_FAILED`, `DNS_FAILED`, `DESTINATION_REJECTED`,
+`CREDITS_EXHAUSTED`, `PROVIDER_LIMIT_REACHED`, and `CONFIGURATION_INVALID`.
+For HTTP failures, `providerResponse` may include only status code, sanitized
+provider error type/code, `Retry-After`, and request ID. Generic HTTP 429
+responses remain `RATE_LIMITED`; quota or organization/project classifications
+require matching structured provider codes. Response bodies, credentials,
+authorization data, and provider URLs are never returned.
+`ANALYSIS_LIMIT` means some chunks were skipped because of configured safety
+limits; it is not a provider error.
+Deterministic findings are preserved when AI fails. The additive `report.status` is
 `COMPLETE` only when deterministic findings are not truncated and all AI chunks
 complete without report truncation; it is `DETERMINISTIC_ONLY` when AI is
-disabled or there is no extractable text to analyze; and it is `PARTIAL` when
+disabled, no extractable text exists, or no deterministic finding context is
+available; and it is `PARTIAL` when
 the provider is unavailable for non-empty content, chunks are incomplete, or a
 finding cap omits report findings. `report.truncated` is true when a finding
 cap omits report findings.
@@ -284,6 +308,12 @@ Report findings identify their `source` as `DETERMINISTIC` or `AI`. The legacy
 `findings` and `summary` fields remain deterministic-only. AI findings are
 advisory and are not policy inputs. Evidence references contain page, line, and
 chunk coordinates only; raw evidence quotes are not returned.
+
+The frontend can request policy evaluation for local analysis or a synthetic
+external export using the returned `inspectionId`. The backend returns the
+authoritative `ALLOW`, `BLOCK`, or `REQUIRE_APPROVAL` result and records an
+audit event. AI findings do not alter that decision. No real external export is
+performed.
 
 Only a hash, bounded metadata, redacted deterministic findings, the bounded
 sanitized report, and expiry are persisted. Raw upload, extracted text,
@@ -305,12 +335,26 @@ private/non-public destinations are rejected, and redirects are not followed.
 HTTP/HTTPS loopback endpoints require the explicit `AI_ALLOW_LOOPBACK=true`
 setting and are intended only for trusted local development.
 
-When enabled, the configured external provider receives bounded chunks of
-extracted text after heuristic redaction of recognized email, phone, and
-credential patterns. No file bytes, filename, agent ID, or inspection ID are
-sent. Redaction is not comprehensive and cannot guarantee that every sensitive
-value is removed; the operator must assess provider retention and data-sharing
-terms before enabling it.
+When enabled, the configured external provider receives only bounded excerpts
+from deterministic finding lines and up to one adjacent line on either side.
+Each excerpt is capped, recognized email, phone, credential, connection-string,
+cloud-key, and private-key values are replaced with typed placeholders, and a
+counts-only structure summary accompanies it. The full extracted document is
+never included in an AI request. No file bytes, filename, agent ID, or
+inspection ID are sent. The shared redaction utility is also applied to
+user-controlled strings before audit/approval persistence and API return.
+Redaction is pattern-based, not comprehensive: unrecognized secrets or
+confidential text inside an allowed excerpt may remain. Documents with no
+deterministic findings are not sent to AI, so AI coverage is reported as
+`NO_FINDING_CONTEXT` rather than implying a full-document AI scan. Operators
+must assess provider retention and data-sharing terms before enabling it.
+
+The optional evaluation advisory uses the same configured provider and sends
+only bounded `tool`, `resource`, `destination`, and `context` values after
+redaction; `agentId` is not sent separately, though a resource may itself be an
+inspection ID. Its strict output schema and five-second timeout are advisory
+only. Provider errors, invalid output, or saturation produce `advisory: null`
+and never change the deterministic policy decision.
 
 To use a report, submit `POST /api/evaluate` with `tool: "analyze_document"`,
 `destination: "local"`, and both `resource` and `inspectionId` set to the
@@ -320,7 +364,12 @@ block, and personal-data findings require approval.
 
 ### `GET /api/events`
 
-Returns audit events newest first.
+Returns document inspection, policy evaluation, and approval audit events
+newest first. A successful document inspection creates a `DOCUMENT_INSPECTION`
+event with the sanitized filename, opaque inspection ID, finding count, report
+risk/status, timestamp, and `decision: "INSPECTED"`. This is an informational
+scan record, not an authorization decision. Raw file content and findings'
+evidence are not included.
 
 - `limit`: optional integer 1–200, default 50.
 - Invalid query values return 400.
@@ -417,6 +466,11 @@ normalized/redacted `resource`, `decision`, `ruleId`, `reason`, `executed`,
 `approvalId` (null when not applicable), `advisory` (null when unavailable),
 and `type: "EVALUATION"`.
 
+Each successful document upload also creates a `DOCUMENT_INSPECTION` event.
+Its `INSPECTED` marker means only that scanning completed; it is distinct from
+the policy decisions `ALLOW`, `BLOCK`, and `REQUIRE_APPROVAL`. The event
+includes bounded summary metadata but no raw document content or evidence.
+
 An approval outcome creates an event with `type: "APPROVAL_DECISION"`,
 `approvalStatus`, reviewer and redacted note. It links to the original
 `approvalId` and preserves the original decision/rule. Do not store raw context
@@ -447,6 +501,7 @@ All errors use one envelope:
 | 422 | `DOCUMENT_UNREADABLE` | Empty, malformed, unsafe, or unsupported document structure. |
 | 500 | `INTERNAL_ERROR` | Unexpected error; do not leak internals. |
 | 503 | `AUDIT_UNAVAILABLE` | Required audit/inspection persistence failed; no operation executed. |
+| 503 | `INSPECTION_UNAVAILABLE` | The process has reached its concurrent inspection capacity. |
 | 503 | `INSPECTION_UNAVAILABLE` | Parser capacity is full. |
 
 If MongoDB is unavailable or the initial required audit write fails,
@@ -468,12 +523,16 @@ requires human approval.”
 
 #### Current detector coverage (informational, not a security guarantee)
 
-The deterministic scanner currently detects email and phone-like patterns,
-selected labeled credential key/value patterns, one cloud access-key-like
-format, and selected suspicious-instruction phrases. For credentials, examples
-of supported labels are `api_key`, `access_token`, `password`, `passwd`,
-`secret`, and `client_secret`; values must contain at least six non-whitespace
-characters. It also checks an `AKIA` prefix followed by 16 uppercase
+The deterministic scanner detects email and phone-like patterns, selected
+India identity patterns (PAN, IFSC, UPI, contextual DOB, and Verhoeff-validated
+Aadhaar), Luhn-validated payment cards, MOD-97-validated IBANs, context-labeled
+bank accounts, and financial table headers. GSTIN detection checks format only,
+not its checksum.
+It also detects selected labeled credential key/value patterns, one cloud
+access-key-like format, and selected suspicious-instruction phrases. For
+credentials, examples of supported labels are `api_key`, `access_token`,
+`password`, `passwd`, `secret`, and `client_secret`; values must contain at
+least six non-whitespace characters. It also checks an `AKIA` prefix followed by 16 uppercase
 alphanumeric characters. Bare secret-looking strings and other credential
 formats are not guaranteed to be detected. Use a labeled synthetic value such
 as `api_key=sample-secret-value` when demonstrating this detector.

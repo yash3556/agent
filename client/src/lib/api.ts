@@ -1,4 +1,4 @@
-import type { ApiError, Approval, AuditEvent, EvaluateRequest, EvaluateResponse, Health, Scenario } from "../types";
+import type { ApiError, Approval, AuditEvent, EvaluateRequest, EvaluateResponse, Health, InspectionResponse, Scenario } from "../types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL?.trim() || "/api").replace(/\/$/, "");
 
@@ -7,7 +7,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     response = await fetch(`${API_BASE}${path}`, {
       ...init,
-      headers: { "Content-Type": "application/json", ...init?.headers },
+      headers: {
+        ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+        ...init?.headers,
+      },
     });
   } catch {
     throw { error: "NETWORK_ERROR", message: "Could not reach the backend. Check that the server is running." } satisfies ApiError;
@@ -25,6 +28,12 @@ export const api = {
   evaluate: (body: EvaluateRequest) => request<EvaluateResponse>("/evaluate", { method: "POST", body: JSON.stringify(body) }),
   events: () => request<{ events: AuditEvent[] }>("/events?limit=50"),
   approvals: (status?: "pending" | "approved" | "rejected") => request<{ approvals: Approval[] }>(`/approvals${status ? `?status=${status}` : ""}`),
+  inspectDocument: (file: File, agentId: string) => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("agentId", agentId);
+    return request<InspectionResponse>("/documents/inspect", { method: "POST", body });
+  },
   decide: (id: string, decision: "APPROVED" | "REJECTED", note: string) => request<{ approval: Approval; eventId: string; executed: boolean }>(`/approvals/${encodeURIComponent(id)}/decision`, {
     method: "POST", body: JSON.stringify({ decision, reviewer: "demo-reviewer", ...(note.trim() ? { note: note.trim() } : {}) }),
   }),

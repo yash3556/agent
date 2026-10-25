@@ -1,10 +1,14 @@
 import { deflateRawSync } from "node:zlib";
 import request from "supertest";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import { MemoryAuditStore } from "../src/config/database.js";
 import { executeSyntheticTool } from "../src/services/tool-simulator.js";
 import { createDocumentAnalyzer } from "../src/ai/document-analysis.js";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function crc32(data: Buffer): number {
   let crc = 0xffffffff;
@@ -69,7 +73,105 @@ function makeDocx(text: string): Buffer {
   });
 }
 
+function makeXlsx(text: string, sheetCount = 1): Buffer {
+  const sheetElements = Array.from({ length: sheetCount }, (_, index) =>
+    `<sheet name="Sheet${index + 1}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join("");
+  const relationships = Array.from({ length: sheetCount }, (_, index) =>
+    `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join("");
+  const entries: Record<string, string> = {
+    "[Content_Types].xml": `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>`,
+    "xl/workbook.xml": `<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheetElements}</sheets></workbook>`,
+    "xl/_rels/workbook.xml.rels": `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationships}<Relationship Id="rId${sheetCount + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/></Relationships>`,
+    "xl/sharedStrings.xml": `<?xml version="1.0"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>${text}</t></si></sst>`,
+  };
+  for (let index = 1; index <= sheetCount; index += 1) {
+    entries[`xl/worksheets/sheet${index}.xml`] =
+      `<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row></sheetData></worksheet>`;
+  }
+  return makeZip(entries);
+}
+
 describe("document inspection API", () => {
+  it("keeps recognized secrets out of provider requests, reports, audit storage, and logs", async () => {
+    const store = new MemoryAuditStore();
+    const providerChunks: string[] = [];
+    const analyzer = createDocumentAnalyzer({
+      async analyzeChunk(chunk) {
+        providerChunks.push(JSON.stringify(chunk));
+        return [{
+          category: "OTHER",
+          type: "api_key=sentinel-provider-type",
+          severity: "HIGH",
+          confidence: 0.8,
+          explanation: "Provider echoed api_key=sentinel-provider-explanation.",
+          recommendation: "Rotate redis://user:sentinel-provider-password@host.example.test/db",
+          evidenceReferences: [{
+            page: chunk.lines[0].page,
+            line: chunk.lines[0].line,
+          }],
+        }];
+      },
+    });
+    const logger = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const source = [
+      "sentinel-outside-selected-context",
+      "Second line outside the finding context.",
+      "Ordinary context before a detected line.",
+      "Contact sentinel.person@example.test; api_key=sentinel-api-secret-value; mongodb://user:sentinel-db-password@db.example.test/app",
+      "Ordinary context after a detected line.",
+      "Second context boundary.",
+      "-----BEGIN PRIVATE KEY-----",
+      "sentinel-private-key-material",
+      "-----END PRIVATE KEY-----",
+      "sentinel-document-tail",
+    ].join("\n");
+    const response = await request(createApp(store, { documentAnalyzer: analyzer }))
+      .post("/api/documents/inspect")
+      .field("agentId", "demo-agent")
+      .attach("file", Buffer.from(source), {
+        filename: "sentinel-file@example.test.txt",
+        contentType: "text/plain",
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body.document.originalName).toContain("[REDACTED_EMAIL]");
+    expect(response.body.findings.map(({ type }: { type: string }) => type)).toEqual(
+      expect.arrayContaining(["EMAIL_ADDRESS", "CREDENTIAL_LIKE", "DATABASE_CONNECTION_STRING"]),
+    );
+    expect(response.body.findings[0].location).toMatchObject({ page: null, line: 4 });
+    expect(response.body.report.findings.some(({ source: findingSource }: { source: string }) =>
+      findingSource === "AI",
+    )).toBe(true);
+
+    const persistedValues = JSON.stringify({
+      response: response.body,
+      inspection: await store.getInspection(response.body.inspectionId),
+      events: await store.listEvents(50),
+      logs: logger.mock.calls,
+    });
+    const providerPayload = providerChunks.join("");
+    for (const sentinel of [
+      "sentinel-outside-selected-context",
+      "sentinel-document-tail",
+      "sentinel.person@example.test",
+      "sentinel-api-secret-value",
+      "sentinel-db-password",
+      "sentinel-private-key-material",
+      "sentinel-file@example.test",
+      "sentinel-provider-type",
+      "sentinel-provider-explanation",
+      "sentinel-provider-password",
+    ]) {
+      expect(providerPayload).not.toContain(sentinel);
+      expect(persistedValues).not.toContain(sentinel);
+    }
+    expect(providerPayload).toContain("[REDACTED_EMAIL]");
+    expect(providerPayload).toContain("[REDACTED_CREDENTIAL]");
+    expect(providerPayload).toContain("[REDACTED_CONNECTION_STRING]");
+    expect(logger).not.toHaveBeenCalled();
+    logger.mockRestore();
+  });
+
   it("extracts and scans TXT, PDF, and DOCX content without returning raw sensitive values", async () => {
     const cases = [
       {
@@ -103,8 +205,146 @@ describe("document inspection API", () => {
         summary: { totalFindings: 1 },
         findings: [{ category: "PERSONAL_DATA", evidence: "[REDACTED_EMAIL]" }],
       });
+      expect((await store.listEvents(50))[0]).toMatchObject({
+        type: "DOCUMENT_INSPECTION",
+        tool: "inspect_document",
+        decision: "INSPECTED",
+        inspectionId: response.body.inspectionId,
+        documentName: item.name,
+        findingCount: 1,
+      });
+      const auditResponse = await request(createApp(store)).get("/api/events");
+      expect(auditResponse.body.events[0]).toMatchObject({
+        type: "DOCUMENT_INSPECTION",
+        documentName: item.name,
+        decision: "INSPECTED",
+      });
       expect(JSON.stringify(response.body)).not.toContain("alice@example.test");
     }
+  });
+
+  it("extracts and scans CSV, JSON, Markdown, and XLSX documents", async () => {
+    const cases = [
+      {
+        name: "contacts.csv",
+        type: "text/csv",
+        data: Buffer.from("name,email\nAlice,alice@example.test"),
+        mediaType: "text/csv",
+      },
+      {
+        name: "contacts.json",
+        type: "application/json",
+        data: Buffer.from('{"email":"alice\\u0040example.test"}'),
+        mediaType: "application/json",
+      },
+      {
+        name: "notes.md",
+        type: "text/markdown",
+        data: Buffer.from("# Contact\n\nalice@example.test"),
+        mediaType: "text/markdown",
+      },
+      {
+        name: "contacts.xlsx",
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        data: makeXlsx("alice@example.test"),
+        mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      },
+    ];
+
+    for (const item of cases) {
+      const response = await request(createApp(new MemoryAuditStore()))
+        .post("/api/documents/inspect")
+        .field("agentId", "demo-agent")
+        .attach("file", item.data, { filename: item.name, contentType: item.type });
+
+      expect(response.status, item.name).toBe(201);
+      expect(response.body.document.mediaType, item.name).toBe(item.mediaType);
+      expect(response.body.findings[0]).toMatchObject({
+        type: "EMAIL_ADDRESS",
+        evidence: "[REDACTED_EMAIL]",
+      });
+    }
+  });
+
+  it("rejects content that does not match CSV, JSON, Markdown, and XLSX declarations", async () => {
+    const cases = [
+      {
+        name: "broken.csv",
+        type: "text/csv",
+        data: Buffer.from('name,"unclosed'),
+      },
+      {
+        name: "broken.json",
+        type: "application/json",
+        data: Buffer.from('{"email":'),
+      },
+      {
+        name: "binary.md",
+        type: "text/markdown",
+        data: Buffer.from([0xff, 0x00, 0xfe]),
+      },
+      {
+        name: "not-a-workbook.xlsx",
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        data: makeDocx("not a spreadsheet"),
+      },
+    ];
+
+    for (const item of cases) {
+      const response = await request(createApp(new MemoryAuditStore()))
+        .post("/api/documents/inspect")
+        .field("agentId", "demo-agent")
+        .attach("file", item.data, { filename: item.name, contentType: item.type });
+      expect(response.status, item.name).toBe(415);
+      expect(response.body.error, item.name).toBe("UNSUPPORTED_MEDIA_TYPE");
+    }
+
+    const wrongDeclaredType = await request(createApp(new MemoryAuditStore()))
+      .post("/api/documents/inspect")
+      .field("agentId", "demo-agent")
+      .attach("file", Buffer.from('{"ok":true}'), {
+        filename: "valid.json",
+        contentType: "text/markdown",
+      });
+    expect(wrongDeclaredType.status).toBe(415);
+  });
+
+  it("keeps inspection data sanitized when audit persistence and cleanup fail", async () => {
+    class AuditFailureStore extends MemoryAuditStore {
+      deletedInspectionId = "";
+
+      override async insertEvent(): Promise<void> {
+        throw new Error("audit store unavailable");
+      }
+
+      override async deleteInspection(inspectionId: string): Promise<void> {
+        this.deletedInspectionId = inspectionId;
+        throw new Error("cleanup unavailable");
+      }
+    }
+    const store = new AuditFailureStore();
+    const logger = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const response = await request(createApp(store))
+      .post("/api/documents/inspect")
+      .field("agentId", "demo-agent")
+      .attach("file", Buffer.from("Contact sentinel.audit@example.test"), {
+        filename: "api_key=sentinel-filename-secret.txt",
+        contentType: "text/plain",
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe("AUDIT_UNAVAILABLE");
+    expect(store.deletedInspectionId).toMatch(/^ins_/);
+    const orphanedInspection = await store.getInspection(store.deletedInspectionId);
+    expect(orphanedInspection?.originalName).toContain("[REDACTED_CREDENTIAL]");
+    const visibleFailureData = JSON.stringify({
+      response: response.body,
+      inspection: orphanedInspection,
+      logs: logger.mock.calls,
+    });
+    expect(visibleFailureData).not.toContain("sentinel.audit@example.test");
+    expect(visibleFailureData).not.toContain("sentinel-filename-secret");
+    expect(logger.mock.calls).toEqual([["Could not clean up a failed document inspection."]]);
   });
 
   it("rejects empty, mismatched, malformed, macro-enabled, and unsupported files", async () => {
@@ -184,6 +424,41 @@ describe("document inspection API", () => {
         contentType: "text/plain",
       });
     expect(textTooLarge.status).toBe(422);
+
+    const csvTextTooLarge = await request(app).post("/api/documents/inspect")
+      .field("agentId", "demo-agent")
+      .attach("file", Buffer.alloc(1024 * 1024 + 1, 97), {
+        filename: "large.csv",
+        contentType: "text/csv",
+      });
+    expect(csvTextTooLarge.status).toBe(422);
+
+    const xlsxTextTooLarge = await request(app).post("/api/documents/inspect")
+      .field("agentId", "demo-agent")
+      .attach("file", makeXlsx("a".repeat(1024 * 1024 + 1)), {
+        filename: "large.xlsx",
+        contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+    expect(xlsxTextTooLarge.status).toBe(422);
+
+    const tooManySheets = await request(app).post("/api/documents/inspect")
+      .field("agentId", "demo-agent")
+      .attach("file", makeXlsx("small", 101), {
+        filename: "many-sheets.xlsx",
+        contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+    expect(tooManySheets.status).toBe(422);
+
+    const tooManyParagraphs = await request(app).post("/api/documents/inspect")
+      .field("agentId", "demo-agent")
+      .attach("file", makeZip({
+        "[Content_Types].xml": `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`,
+        "word/document.xml": `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${"<w:p/>".repeat(1001)}</w:body></w:document>`,
+      }), {
+        filename: "many-paragraphs.docx",
+        contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      });
+    expect(tooManyParagraphs.status).toBe(422);
   });
 
   it("redacts sensitive values from uploaded filenames", async () => {
@@ -196,8 +471,69 @@ describe("document inspection API", () => {
       });
 
     expect(response.status).toBe(201);
-    expect(response.body.document.originalName).toBe("[REDACTED].txt");
+    expect(response.body.document.originalName).toBe("[REDACTED_EMAIL].txt");
     expect(JSON.stringify(response.body)).not.toContain("alice@example.test");
+  });
+
+  it("normalizes hostile filenames and bounds the displayed name", async () => {
+    const response = await request(createApp(new MemoryAuditStore()))
+      .post("/api/documents/inspect")
+      .field("agentId", "demo-agent")
+      .attach("file", Buffer.from("ordinary document"), {
+        filename: "..\\..\\alice@example.test\u202e<>.markdown",
+        contentType: "text/markdown",
+      });
+
+    expect(response.status).toBe(201);
+    const name = response.body.document.originalName as string;
+    expect(name).toMatch(/\.md$/);
+    expect(name).not.toMatch(/[\\/]/);
+    expect(name).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/);
+    expect(name).not.toContain("alice@example.test");
+    expect(Array.from(name.slice(0, -3)).length).toBeLessThanOrEqual(120);
+  });
+
+  it("admits no more than three concurrent document inspections", async () => {
+    const delegate = createDocumentAnalyzer();
+    let entered = 0;
+    let notifyThreeEntered: () => void = () => undefined;
+    let releaseAnalyzer: () => void = () => undefined;
+    const threeEntered = new Promise<void>((resolve) => {
+      notifyThreeEntered = resolve;
+    });
+    const analyzerGate = new Promise<void>((resolve) => {
+      releaseAnalyzer = resolve;
+    });
+    const analyzer = {
+      async analyze(...args: Parameters<typeof delegate.analyze>) {
+        entered += 1;
+        if (entered === 3) notifyThreeEntered();
+        await analyzerGate;
+        return delegate.analyze(...args);
+      },
+    };
+    const app = createApp(new MemoryAuditStore(), { documentAnalyzer: analyzer });
+    const upload = () => request(app)
+      .post("/api/documents/inspect")
+      .field("agentId", "demo-agent")
+      .attach("file", Buffer.from("Contact alice@example.test"), {
+        filename: "contact.txt",
+        contentType: "text/plain",
+      });
+    const admitted = [upload(), upload(), upload()];
+    const completed = Promise.all(admitted);
+    await threeEntered;
+
+    const rejected = await upload();
+    expect(rejected.status).toBe(503);
+    expect(rejected.body.error).toBe("INSPECTION_UNAVAILABLE");
+
+    releaseAnalyzer();
+    const responses = await completed;
+    expect(responses.map((response) => response.status)).toEqual([201, 201, 201]);
+
+    const afterCapacityRelease = await upload();
+    expect(afterCapacityRelease.status).toBe(201);
   });
 
   it("enforces ownership and policy findings before any execution", async () => {
@@ -330,7 +666,7 @@ describe("document inspection API", () => {
     expect(executeTool).not.toHaveBeenCalled();
   });
 
-  it("keeps AI findings advisory and never weakens deterministic policy blocks", async () => {
+  it("keeps AI findings advisory and never weakens deterministic policy decisions", async () => {
     const store = new MemoryAuditStore();
     const executeTool = vi.fn(executeSyntheticTool);
     const documentAnalyzer = createDocumentAnalyzer({
@@ -350,15 +686,21 @@ describe("document inspection API", () => {
 
     const cleanInspection = await request(app).post("/api/documents/inspect")
       .field("agentId", "demo-agent")
-      .attach("file", Buffer.from("ordinary content"), {
+      .attach("file", Buffer.from("Contact 415-555-0182"), {
         filename: "ordinary.txt",
         contentType: "text/plain",
       });
     expect(cleanInspection.status).toBe(201);
     expect(cleanInspection.body).toMatchObject({
       analysis: { aiAdvisory: "AVAILABLE" },
-      report: { status: "COMPLETE", findings: [{ source: "AI", category: "CREDENTIAL" }] },
-      findings: [],
+      report: {
+        status: "COMPLETE",
+        findings: [
+          { source: "DETERMINISTIC", category: "PERSONAL_DATA" },
+          { source: "AI", category: "CREDENTIAL" },
+        ],
+      },
+      findings: [{ type: "PHONE_NUMBER" }],
     });
 
     const aiOnlyExport = await request(app).post("/api/evaluate").send({
@@ -369,8 +711,8 @@ describe("document inspection API", () => {
       destination: "external",
     });
     expect(aiOnlyExport.body).toMatchObject({
-      decision: "BLOCK",
-      ruleId: "R-999",
+      decision: "REQUIRE_APPROVAL",
+      ruleId: "R-009",
       executed: false,
     });
 
@@ -394,6 +736,6 @@ describe("document inspection API", () => {
     });
     expect(executeTool).not.toHaveBeenCalled();
     expect(JSON.stringify(await store.getInspection(cleanInspection.body.inspectionId)))
-      .not.toContain("ordinary content");
+      .not.toContain("415-555-0182");
   });
 });

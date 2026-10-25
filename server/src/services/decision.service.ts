@@ -1,6 +1,7 @@
 import type { AuditStore } from "../config/database.js";
 import { ApiError, AuditUnavailableError } from "../errors.js";
-import { createApprovalId, createAuditEvent } from "./audit.service.js";
+import { createApprovalId, createAuditEvent, sanitizeAuditEvent } from "./audit.service.js";
+import { redactSensitiveText } from "./redaction.js";
 import { evaluatePolicy } from "./policy-engine.js";
 import { getRiskAdvisory } from "../ai/risk-advisor.js";
 import { executeSyntheticTool, type ToolExecutor } from "./tool-simulator.js";
@@ -26,7 +27,13 @@ export async function evaluateAction(
     : null;
   const policy = evaluatePolicy({ ...request, inspection });
   const canonicalRequest = { ...request, resource: policy.normalizedResource };
-  const advisory = await getRiskAdvisory(canonicalRequest);
+  const advisory = await getRiskAdvisory({
+    ...canonicalRequest,
+    resource: redactSensitiveText(canonicalRequest.resource),
+    ...(canonicalRequest.context === undefined
+      ? {}
+      : { context: redactSensitiveText(canonicalRequest.context) }),
+  });
   const approvalId = policy.decision === "REQUIRE_APPROVAL" ? createApprovalId() : null;
   const event = createAuditEvent({
     request: canonicalRequest,
@@ -46,7 +53,7 @@ export async function evaluateAction(
       eventId: event.eventId,
       agentId: request.agentId,
       tool: request.tool,
-      resource: policy.normalizedResource,
+      resource: redactSensitiveText(policy.normalizedResource),
       ...(request.inspectionId ? { inspectionId: request.inspectionId } : {}),
       ...(request.destination ? { destination: request.destination } : {}),
       status: "PENDING",
@@ -91,5 +98,6 @@ export async function evaluateAction(
 }
 
 export async function listAuditEvents(store: AuditStore, limit: number): Promise<AuditEvent[]> {
-  return persist(() => store.listEvents(limit));
+  const events = await persist(() => store.listEvents(limit));
+  return events.map(sanitizeAuditEvent);
 }

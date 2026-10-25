@@ -10,10 +10,12 @@ export type EvaluateRequest = {
   tool: string;
   resource: string;
   context?: string;
+  inspectionId?: string;
+  destination?: "local" | "external";
 };
 export type EvaluateResponse = {
   eventId: string;
-  decision: Decision;
+  decision: Decision | "INSPECTED";
   reason: string;
   ruleId: string;
   approvalId?: string;
@@ -33,7 +35,11 @@ export type AuditEvent = {
   executed: boolean;
   approvalId: string | null;
   advisory: Advisory | null;
-  type: "EVALUATION" | "APPROVAL_DECISION";
+  type: "EVALUATION" | "APPROVAL_DECISION" | "DOCUMENT_INSPECTION";
+  documentName?: string;
+  findingCount?: number;
+  reportRiskLevel?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" | "UNKNOWN";
+  reportStatus?: "COMPLETE" | "DETERMINISTIC_ONLY" | "PARTIAL";
   approvalStatus?: "APPROVED" | "REJECTED" | null;
   reviewer?: string | null;
   note?: string | null;
@@ -55,6 +61,57 @@ export type Health = {
   time: string;
   db: "connected" | "error";
   storage?: "mongodb" | "memory";
-  ai: "available" | "unavailable" | "disabled";
+  ai: "configured" | "unavailable" | "disabled";
+};
+export type InspectionResponse = {
+  inspectionId: string;
+  status: "COMPLETED";
+  document: { originalName: string; mediaType: string; sizeBytes: number };
+  findings: {
+    id: string;
+    category: "PERSONAL_DATA" | "CREDENTIAL" | "SUSPICIOUS_INSTRUCTION";
+    type: string;
+    severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+    confidence: number;
+    location: { page: number | null; line: number | null };
+    evidence: string;
+    description: string;
+  }[];
+  summary: {
+    totalFindings: number;
+    truncated: boolean;
+    bySeverity: Record<"LOW" | "MEDIUM" | "HIGH" | "CRITICAL", number>;
+  };
+  analysis: {
+    deterministic: "COMPLETED";
+    aiAdvisory: "DISABLED" | "UNAVAILABLE" | "AVAILABLE" | "NOT_NEEDED";
+    aiFailure?: { code: string; message: string };
+  };
+  report: {
+    version: 1;
+    status: "COMPLETE" | "DETERMINISTIC_ONLY" | "PARTIAL";
+    riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" | "UNKNOWN";
+    summary: string;
+    truncated: boolean;
+    findings: {
+      id: string;
+      source: "DETERMINISTIC" | "AI";
+      category: string;
+      type: string;
+      severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+      confidence: number;
+      explanation: string;
+      recommendation: string;
+      evidenceReferences: { page: number | null; line: number; chunk: number | null }[];
+    }[];
+    coverage: {
+      extraction: "COMPLETED";
+      deterministic: "COMPLETED" | "INCOMPLETE";
+      ai: "COMPLETED" | "DISABLED" | "INCOMPLETE" | "UNAVAILABLE" | "NO_CONTENT" | "NO_FINDING_CONTEXT";
+      totalChunks: number;
+      completedChunks: number;
+      failedChunks: number;
+    };
+  };
 };
 export type ApiError = { error: string; message: string; details?: unknown[] };

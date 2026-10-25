@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowRight, Check, CircleAlert, Clipboard, ClipboardCheck, FileClock, FileSearch, LayoutDashboard, RefreshCw, Search, Server, Shield, Workflow, X } from "lucide-react";
+import { ArrowRight, Check, CircleAlert, Clipboard, ClipboardCheck, Download, FileClock, FileSearch, LayoutDashboard, Printer, RefreshCw, Search, Server, Shield, Upload, Workflow, X } from "lucide-react";
 import { api, errorCode, errorMessage } from "./lib/api";
-import type { Advisory, Approval, AuditEvent, Decision, EvaluateRequest, EvaluateResponse, Health, Scenario } from "./types";
+import type { Advisory, Approval, AuditEvent, Decision, EvaluateRequest, EvaluateResponse, Health, InspectionResponse, Scenario } from "./types";
 import { StatusBadge } from "./components/StatusBadge";
 
 type Page = "simulator" | "dashboard" | "approvals" | "audit" | "documents" | "system";
@@ -70,17 +70,18 @@ function EventTable({ events, compact = false }: { events: AuditEvent[]; compact
   </table></div>;
 }
 function FragmentRow({ event, expanded, toggle }: { event: AuditEvent; expanded: boolean; toggle: () => void }) {
-  const status: Decision | "APPROVED" | "REJECTED" = event.type === "APPROVAL_DECISION" ? event.approvalStatus ?? "REJECTED" : event.decision;
+  const status: Decision | "APPROVED" | "REJECTED" | "INSPECTED" = event.type === "APPROVAL_DECISION" ? event.approvalStatus ?? "REJECTED" : event.decision;
+  const actionName = event.type === "DOCUMENT_INSPECTION" ? event.documentName ?? "Document inspection" : event.tool;
   return <>
     <tr className="event-row">
       <td className="nowrap" title={dateTime(event.timestamp)}>{ago(event.timestamp)}</td>
       <td><button className="copy-id" title="Copy event ID" aria-label={`Copy event ID ${event.eventId}`} onClick={(e) => { e.stopPropagation(); void navigator.clipboard?.writeText(event.eventId); }}>{event.eventId}<Clipboard size={13} aria-hidden="true"/></button></td>
-      <td><code>{event.tool}</code><br /><code className="muted-code">{event.resource}</code></td><td><StatusBadge status={status} /></td>
+      <td><code>{actionName}</code><br /><code className="muted-code">{event.resource}</code>{event.type === "DOCUMENT_INSPECTION" && <><br/><small>{event.findingCount ?? 0} findings · {event.reportStatus?.toLowerCase().replace("_", " ")}</small></>}</td><td><StatusBadge status={status} /></td>
       <td className="reason-cell"><button className="reason-toggle" aria-expanded={expanded} onClick={toggle}>{event.reason}<span>{expanded ? "Show less" : "Details"}</span></button></td><td><code>{event.ruleId}</code></td>
       <td><span className={event.executed ? "executed-yes" : "executed-no"}>{event.executed ? "✓ Yes" : "— No"}</span></td>
       <td>{event.advisory ? <span className={`risk-pill risk-${event.advisory.riskLevel.toLowerCase()}`}>{event.advisory.riskLevel}</span> : "—"}</td>
     </tr>
-    {expanded && <tr className="expanded-row"><td colSpan={8}><div><strong>{event.type === "APPROVAL_DECISION" ? "Approval decision" : "Evaluation event"}</strong><p>{event.reason}</p><span>Agent: <code>{event.agentId}</code></span>{event.approvalId && <span>Approval ID: <code>{event.approvalId}</code></span>}{event.reviewer && <span>Reviewer: {event.reviewer}</span>}{event.note && <span>Note: {event.note}</span>}</div></td></tr>}
+    {expanded && <tr className="expanded-row"><td colSpan={8}><div><strong>{event.type === "APPROVAL_DECISION" ? "Approval decision" : event.type === "DOCUMENT_INSPECTION" ? "Document inspection" : "Evaluation event"}</strong><p>{event.reason}</p><span>Agent: <code>{event.agentId}</code></span>{event.type === "DOCUMENT_INSPECTION" && <span>Report risk: {event.reportRiskLevel ?? "UNKNOWN"} · Rule: <code>{event.ruleId}</code></span>}{event.approvalId && <span>Approval ID: <code>{event.approvalId}</code></span>}{event.reviewer && <span>Reviewer: {event.reviewer}</span>}{event.note && <span>Note: {event.note}</span>}</div></td></tr>}
   </>;
 }
 
@@ -135,7 +136,7 @@ export default function App() {
         {page === "dashboard" && <Dashboard events={events} pendingCount={pendingCount} health={health} healthError={healthError} error={globalError} onNavigate={navigate} onRefresh={() => void refreshAll()} />}
         {page === "approvals" && <Approvals onChanged={async () => { await refreshData(); }} />}
         {page === "audit" && <Audit events={events} error={globalError} />}
-        {page === "documents" && <DocumentInspectionUnavailable onEvaluate={() => navigate("simulator")} />}
+        {page === "documents" && <DocumentInspection onApprovals={() => navigate("approvals")} onActionEvaluated={refreshData} />}
         {page === "system" && <SystemStatus health={health} error={healthError} onRefresh={() => void refreshAll()} />}
       </main>
     </div>
@@ -185,22 +186,170 @@ function Dashboard({ events, pendingCount, health, healthError, error, onNavigat
   const stats = [
     { label: "Backend", value: health && !healthError ? "Healthy" : "Unavailable", mark: <Server size={17}/>, tone: health && !healthError ? "green" : "red" },
     { label: "Database", value: health && !healthError ? health.db : "Unknown", mark: "DB", tone: health?.db === "connected" && !healthError ? "green" : "amber" },
-    { label: "AI provider", value: health && !healthError ? health.ai : "Unknown", mark: "AI", tone: health?.ai === "available" && !healthError ? "green" : "navy" },
+    { label: "AI provider", value: health && !healthError ? health.ai : "Unknown", mark: "AI", tone: health?.ai === "configured" && !healthError ? "navy" : "amber" },
     { label: "Recent events · 50 max", value: events.length, mark: <FileClock size={17}/>, tone: "navy" },
   ];
   return <>
     <div className="page-intro"><div><span className="eyebrow">SECURITY OPERATIONS</span><h1>Overview</h1><p>Backend health and recent policy activity.</p></div><button className="outline-button refresh-inline" onClick={onRefresh}><RefreshCw size={14}/> Refresh data</button></div>
     {error && <ErrorBanner>{error}</ErrorBanner>}
     <div className="stats-grid">{stats.map((stat) => <section className="card stat-card" key={stat.label}><div className={`stat-icon ${stat.tone}`} aria-hidden="true">{stat.mark}</div><div><span>{stat.label}</span><strong className="status-value">{stat.value}</strong></div></section>)}</div>
-    <div className="quick-actions"><button className="quick-action" onClick={() => onNavigate("documents")}><FileSearch size={17}/><span><strong>Inspect a document</strong><small>Unavailable in current API</small></span><ArrowRight size={15}/></button><button className="quick-action" onClick={() => onNavigate("simulator")}><Workflow size={17}/><span><strong>Evaluate an action</strong><small>Run a policy decision</small></span><ArrowRight size={15}/></button><button className="quick-action" onClick={() => onNavigate("approvals")}><ClipboardCheck size={17}/><span><strong>Review approvals</strong><small>{pendingCount} pending</small></span><ArrowRight size={15}/></button></div>
+    <div className="quick-actions"><button className="quick-action" onClick={() => onNavigate("documents")}><FileSearch size={17}/><span><strong>Inspect a document</strong><small>Upload PDF, DOCX, or TXT</small></span><ArrowRight size={15}/></button><button className="quick-action" onClick={() => onNavigate("simulator")}><Workflow size={17}/><span><strong>Evaluate an action</strong><small>Run a policy decision</small></span><ArrowRight size={15}/></button><button className="quick-action" onClick={() => onNavigate("approvals")}><ClipboardCheck size={17}/><span><strong>Review approvals</strong><small>{pendingCount} pending</small></span><ArrowRight size={15}/></button></div>
     <section className="card table-card"><div className="section-heading table-heading"><div><span className="eyebrow">LATEST ACTIVITY</span><h2>Recent audit events</h2></div><span className="muted">{events.length} event{events.length === 1 ? "" : "s"}</span></div><EventTable events={events} compact /></section>
   </>;
 }
 
-function DocumentInspectionUnavailable({ onEvaluate }: { onEvaluate: () => void }) {
+function DocumentInspection({ onApprovals, onActionEvaluated }: { onApprovals: () => void; onActionEvaluated: () => Promise<void> }) {
+  const [agentId, setAgentId] = useState("demo-agent");
+  const [file, setFile] = useState<File | null>(null);
+  const [result, setResult] = useState<InspectionResponse | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [policyResult, setPolicyResult] = useState<EvaluateResponse | null>(null);
+  const [policyError, setPolicyError] = useState("");
+  const [policyBusy, setPolicyBusy] = useState(false);
+
+  const inspect = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!file) {
+      setError("Choose a PDF, DOCX, or TXT file to inspect.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError("The file exceeds the 5 MiB upload limit.");
+      return;
+    }
+    setError("");
+    setResult(null);
+    setPolicyResult(null);
+    setPolicyError("");
+    setBusy(true);
+    try {
+      const inspection = await api.inspectDocument(file, agentId);
+      setResult(inspection);
+      await onActionEvaluated();
+    } catch (failure) {
+      setError(errorMessage(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const evaluateAction = async (tool: "analyze_document" | "export_report", destination: "local" | "external") => {
+    if (!result) return;
+    setPolicyBusy(true);
+    setPolicyError("");
+    setPolicyResult(null);
+    try {
+      const evaluation = await api.evaluate({
+        agentId,
+        tool,
+        resource: result.inspectionId,
+        inspectionId: result.inspectionId,
+        destination,
+      });
+      setPolicyResult(evaluation);
+      await onActionEvaluated();
+    } catch (failure) {
+      setPolicyError(errorMessage(failure));
+    } finally {
+      setPolicyBusy(false);
+    }
+  };
+
+  const downloadReport = () => {
+    if (!result) return;
+    const report = {
+      title: "AgentShield document security report",
+      generatedAt: new Date().toISOString(),
+      document: result.document,
+      inspectionId: result.inspectionId,
+      analysis: result.analysis,
+      report: result.report,
+      deterministicSummary: result.summary,
+      policyDecision: policyResult ? {
+        decision: policyResult.decision,
+        ruleId: policyResult.ruleId,
+        reason: policyResult.reason,
+        approvalId: policyResult.approvalId,
+      } : null,
+      limitations: "A clean scan is not proof a document is safe. AI findings are advisory and do not authorize actions.",
+    };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${result.document.originalName.replace(/\.[^.]+$/, "")}-security-report.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const hasInstructionRisk = result?.report.findings.some((finding) =>
+    ["SUSPICIOUS_INSTRUCTION", "PROMPT_INJECTION", "POLICY_BYPASS", "DATA_EXFILTRATION"].includes(finding.category),
+  ) ?? false;
+  const hasSensitiveRisk = result?.report.findings.some((finding) =>
+    ["PERSONAL_DATA", "CREDENTIAL"].includes(finding.category),
+  ) ?? false;
+  const timelineFindings = result ? [...result.report.findings].sort((left, right) => {
+    const leftReference = left.evidenceReferences[0];
+    const rightReference = right.evidenceReferences[0];
+    return (leftReference?.page ?? Number.MAX_SAFE_INTEGER) - (rightReference?.page ?? Number.MAX_SAFE_INTEGER)
+      || (leftReference?.line ?? 0) - (rightReference?.line ?? 0)
+      || (leftReference?.chunk ?? 0) - (rightReference?.chunk ?? 0);
+  }) : [];
+
   return <>
-    <div className="page-intro"><div><span className="eyebrow">DOCUMENT SECURITY</span><h1>Document inspection</h1><p>Inspecting documents requires a backend endpoint and an explicit inspection contract.</p></div></div>
-    <section className="card unavailable-card"><span className="unavailable-icon"><FileSearch size={23}/></span><div><span className="eyebrow">NOT AVAILABLE IN THIS BACKEND</span><h2>No inspection endpoint is configured</h2><p>The current server does not implement <code>POST /api/documents/inspect</code>, multipart upload handling, accepted file types, or an inspection-result schema. This workspace therefore does not accept or transmit files, and cannot show findings it did not receive.</p><p>When inspection is implemented server-side, the UI can safely display its returned redacted findings and inspection metadata here. Until then, use the supported policy evaluation screen for synthetic action requests.</p><button className="primary-button" onClick={onEvaluate}>Open policy evaluation <ArrowRight size={15}/></button></div></section>
+    <div className="page-intro"><div><span className="eyebrow">DOCUMENT SECURITY</span><h1>Document inspection</h1><p>Upload a document for bounded extraction and security scanning.</p></div></div>
+    <form className="card document-upload" onSubmit={(event) => void inspect(event)}>
+      <div className="section-heading"><div><span className="eyebrow">UPLOAD FOR ANALYSIS</span><h2>Choose a document</h2></div><span className="untrusted-chip">Untrusted file</span></div>
+      <label className="document-agent">Agent ID<input value={agentId} maxLength={64} required onChange={(event) => setAgentId(event.target.value)} /></label>
+      <label className="document-file">
+        <Upload size={20}/>
+        <strong>{file ? file.name : "Choose a file to inspect"}</strong>
+        <span>{file ? `${(file.size / 1024 / 1024).toFixed(2)} MiB` : "PDF, DOCX, TXT, CSV, JSON, Markdown, or XLSX · maximum 5 MiB"}</span>
+        <input type="file" accept=".pdf,.docx,.txt,.csv,.json,.md,.markdown,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv,application/csv,application/json,text/json,text/markdown,text/x-markdown,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => { setFile(event.target.files?.[0] ?? null); setResult(null); setError(""); }} />
+      </label>
+      <p className="document-privacy">The raw upload is not stored. The backend stores the document hash, bounded metadata, and redacted findings for up to 24 hours. If AI analysis is enabled, redacted extracted text may be sent to the configured provider. Scanning is not a guarantee that a document is safe.</p>
+      {error && <ErrorBanner>{error}</ErrorBanner>}
+      <button className="primary-button" type="submit" disabled={busy || !file}><Upload size={15}/>{busy ? "Inspecting…" : "Upload and inspect"}</button>
+    </form>
+    {result && <section className="card inspection-result">
+      <div className="section-heading"><div><span className="eyebrow">DOCUMENT SECURITY REPORT</span><h2>{result.document.originalName}</h2></div><div className="report-actions"><span className={`risk-pill risk-${result.report.riskLevel.toLowerCase()}`}>{result.report.riskLevel} risk</span><button className="outline-button" type="button" onClick={downloadReport}><Download size={14}/> JSON report</button><button className="outline-button" type="button" onClick={() => window.print()}><Printer size={14}/> Print / PDF</button></div></div>
+      <p>{result.analysis.aiFailure
+        ? `${result.analysis.aiFailure.code === "ANALYSIS_LIMIT" ? "AI analysis incomplete" : "AI analysis failed"} — deterministic scan completed.`
+        : result.report.summary}</p>
+      <div className="inspection-meta"><span>Inspection ID <code>{result.inspectionId}</code></span><span>{result.summary.totalFindings} deterministic finding{result.summary.totalFindings === 1 ? "" : "s"}</span><span>AI analysis: {result.analysis.aiAdvisory === "AVAILABLE" ? "completed" : result.analysis.aiAdvisory === "NOT_NEEDED" ? "not run (no safe finding context)" : result.analysis.aiAdvisory === "DISABLED" ? "disabled" : result.analysis.aiFailure ? "failed" : "unavailable"}</span><span>Extraction: {result.report.coverage.extraction.toLowerCase()}</span><span>Coverage: {result.report.coverage.deterministic.toLowerCase()} deterministic · {result.report.coverage.completedChunks}/{result.report.coverage.totalChunks} AI chunks completed · {result.report.coverage.failedChunks} failed</span></div>
+      <div className="report-summary-grid">
+        <div><span>Threat findings</span><strong>{result.report.findings.length}</strong></div>
+        <div><span>Sensitive-data indicators</span><strong>{result.report.findings.filter((finding) => ["PERSONAL_DATA", "CREDENTIAL"].includes(finding.category)).length}</strong></div>
+        <div><span>Analysis coverage</span><strong>{result.report.coverage.totalChunks === 0 ? "No text" : `${Math.round(result.report.coverage.completedChunks / result.report.coverage.totalChunks * 100)}%`}</strong><small>{result.report.coverage.completedChunks} / {result.report.coverage.totalChunks} chunks analyzed</small></div>
+        <div><span>Recommended policy action</span><strong>{hasInstructionRisk || result.report.findings.some((finding) => finding.category === "CREDENTIAL") ? "BLOCK" : hasSensitiveRisk ? "HUMAN REVIEW" : "EVALUATE"}</strong><small>Recommendation only; backend policy decides</small></div>
+        {(["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const).map((severity) => <div key={severity}><span>{severity} findings</span><strong>{result.report.findings.filter((finding) => finding.severity === severity).length}</strong></div>)}
+      </div>
+      {(hasInstructionRisk || hasSensitiveRisk) && <aside className="threat-correlation"><strong>Why this may be risky</strong><p>{hasInstructionRisk && hasSensitiveRisk
+        ? "Instruction-like content and sensitive-data indicators co-occur in this document. Together they can increase the risk of unauthorized disclosure; this correlation is a heuristic, not proof of intent."
+        : hasInstructionRisk
+          ? "Instruction-like content may attempt to influence an agent's task or tool use. Treat document contents as untrusted input."
+          : "Sensitive-data indicators were found. Verify authorization and destination before sharing; credentials should be rotated if they were exposed."}</p></aside>}
+      {result.analysis.aiFailure && <ErrorBanner>{result.analysis.aiFailure.message} Deterministic findings are still available; AI output is advisory only.</ErrorBanner>}
+      <section className="policy-evaluation">
+        <div><span className="eyebrow">BACKEND ENFORCEMENT</span><h3>Evaluate a requested action</h3><p>AI findings are advisory. The backend policy engine alone returns ALLOW, BLOCK, or REQUIRE_APPROVAL.</p></div>
+        <div className="report-actions"><button className="primary-button" type="button" disabled={policyBusy} onClick={() => void evaluateAction("analyze_document", "local")}>Evaluate local analysis</button><button className="outline-button" type="button" disabled={policyBusy} onClick={() => void evaluateAction("export_report", "external")}>Evaluate external export</button></div>
+      </section>
+      {policyError && <ErrorBanner>{policyError}</ErrorBanner>}
+      {policyResult && <section className={`card report-policy-result decision-${policyResult.decision.toLowerCase()}`}>
+        <div className="section-heading"><div><span className="eyebrow">POLICY DECISION · {policyResult.ruleId}</span><h3><StatusBadge status={policyResult.decision}/></h3></div><span className="muted">Audit event <code>{policyResult.eventId}</code></span></div>
+        <p>{policyResult.reason}</p>
+        {policyResult.decision === "REQUIRE_APPROVAL" && <button type="button" className="text-link" onClick={onApprovals}>Review pending approval <ArrowRight size={14}/></button>}
+      </section>}
+      {result.report.truncated && <ErrorBanner>Some findings were omitted because the report reached its result limit.</ErrorBanner>}
+      {result.report.findings.length === 0 ? <EmptyState title="No findings reported." detail="A clean scan is not proof that the document is safe." /> : <div className="inspection-findings">{timelineFindings.map((finding) => <article className="inspection-finding" key={finding.id}>
+        <div><span className={`risk-pill risk-${finding.severity.toLowerCase()}`}>{finding.severity}</span><strong>{finding.type.replaceAll("_", " ")}</strong><span className="finding-source">{finding.source}</span></div>
+        <p>{finding.explanation}</p><p className="muted">{finding.recommendation}</p>
+        <details><summary>Evidence viewer</summary><p>{finding.source === "DETERMINISTIC"
+          ? result.findings.find((item) => item.type === finding.type && item.location.page === finding.evidenceReferences[0]?.page && item.location.line === finding.evidenceReferences[0]?.line)?.evidence ?? "Redacted evidence marker unavailable."
+          : "Raw excerpts are withheld; AI evidence is represented by source coordinates only."}</p></details>
+        {finding.evidenceReferences.length > 0 && <small>Threat timeline: {finding.evidenceReferences.map((reference) => [reference.page !== null ? `page ${reference.page}` : null, reference.line ? `line ${reference.line}` : null, reference.chunk !== null ? `chunk ${reference.chunk}` : null].filter(Boolean).join(", ")).join("; ")}</small>}
+      </article>)}</div>}
+    </section>}
   </>;
 }
 
@@ -209,7 +358,7 @@ function SystemStatus({ health, error, onRefresh }: { health: Health | null; err
     <div className="page-intro"><div><span className="eyebrow">CONNECTIVITY</span><h1>API / System Status</h1><p>Live health response from the configured API origin.</p></div><button className="outline-button refresh-inline" onClick={onRefresh}><RefreshCw size={14}/> Check again</button></div>
     {error || !health ? <section className="card system-error" role="alert"><CircleAlert size={20}/><div><h2>Backend status unavailable</h2><p>Could not reach <code>/api/health</code>. Check that the API is running, the API base URL is configured correctly, and cross-origin access is allowed.</p><button className="outline-button" onClick={onRefresh}>Retry connection</button></div></section> : <>
       <section className="card system-health-banner"><span className="health-dot"/><div><strong>Backend responded · {health.status}</strong><small>Health check at {dateTime(health.time)}</small></div></section>
-      <div className="system-grid"><StatusDetail title="Backend" value={health.status} description="API health endpoint response" healthy={health.status === "ok"}/><StatusDetail title="Database" value={health.db} description="Current persistence connectivity" healthy={health.db === "connected"}/><StatusDetail title="Storage mode" value={health.storage ?? "Not reported"} description={health.storage === "memory" ? "Development storage; data is not persistent." : "Storage mode reported by backend."} healthy={health.db === "connected"}/><StatusDetail title="AI provider" value={health.ai} description={health.ai === "disabled" ? "AI is disabled by configuration; policy decisions remain backend-owned." : "Provider status reported by backend."} healthy={health.ai === "available" || health.ai === "disabled"}/></div>
+      <div className="system-grid"><StatusDetail title="Backend" value={health.status} description="API health endpoint response" healthy={health.status === "ok"}/><StatusDetail title="Database" value={health.db} description="Current persistence connectivity" healthy={health.db === "connected"}/><StatusDetail title="Storage mode" value={health.storage ?? "Not reported"} description={health.storage === "memory" ? "Development storage; data is not persistent." : "Storage mode reported by backend."} healthy={health.db === "connected"}/><StatusDetail title="AI provider" value={health.ai} description={health.ai === "disabled" ? "AI is disabled by configuration." : health.ai === "configured" ? "AI settings are loaded; actual status appears after a document analysis request." : "AI settings are missing or invalid."} healthy={health.ai !== "unavailable"}/></div>
     </>}
   </>;
 }
@@ -224,14 +373,14 @@ function Audit({ events, error }: { events: AuditEvent[]; error: string }) {
   const visible = events.filter((event) => {
     const state = event.type === "APPROVAL_DECISION" ? event.approvalStatus ?? "" : event.decision;
     const matchesFilter = filter === "ALL" || state === filter;
-    const haystack = `${event.eventId} ${event.agentId} ${event.tool} ${event.resource} ${event.reason} ${event.ruleId} ${event.approvalId ?? ""}`.toLowerCase();
+    const haystack = `${event.eventId} ${event.agentId} ${event.tool} ${event.documentName ?? ""} ${event.resource} ${event.reason} ${event.ruleId} ${event.approvalId ?? ""}`.toLowerCase();
     return matchesFilter && haystack.includes(query.toLowerCase());
   });
   return <>
-    <div className="page-intro"><div><span className="eyebrow">TRACEABILITY</span><h1>Audit Log</h1><p>Every evaluation and approval outcome, newest first.</p></div><span className="records-count">{visible.length} records</span></div>
+    <div className="page-intro"><div><span className="eyebrow">TRACEABILITY</span><h1>Audit Log</h1><p>Document inspections, policy evaluations, and approval outcomes, newest first.</p></div><span className="records-count">{visible.length} records</span></div>
     {error && <ErrorBanner>{error}</ErrorBanner>}
-    <section className="card table-card"><div className="audit-toolbar"><div className="filter-control"><label htmlFor="decision-filter">Decision</label><select id="decision-filter" value={filter} onChange={(e) => setFilter(e.target.value)}><option value="ALL">All decisions</option><option value="ALLOW">Allowed</option><option value="BLOCK">Blocked</option><option value="REQUIRE_APPROVAL">Requires approval</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option></select></div><label className="search-control"><Search size={15} aria-hidden="true"/><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search events" aria-label="Search audit events" /></label></div>
-      {visible.length === 0 ? <EmptyState title={events.length ? "No events match these filters." : "No actions evaluated yet. Run a scenario in the Action Simulator."} /> : <EventTable events={visible} />}
+    <section className="card table-card"><div className="audit-toolbar"><div className="filter-control"><label htmlFor="decision-filter">Activity</label><select id="decision-filter" value={filter} onChange={(e) => setFilter(e.target.value)}><option value="ALL">All activity</option><option value="INSPECTED">Document inspections</option><option value="ALLOW">Allowed</option><option value="BLOCK">Blocked</option><option value="REQUIRE_APPROVAL">Requires approval</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option></select></div><label className="search-control"><Search size={15} aria-hidden="true"/><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search events" aria-label="Search audit events" /></label></div>
+      {visible.length === 0 ? <EmptyState title={events.length ? "No events match these filters." : "No events recorded yet. Upload a document or evaluate an action."} /> : <EventTable events={visible} />}
     </section>
   </>;
 }

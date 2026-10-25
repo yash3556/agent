@@ -16,6 +16,16 @@ Copy-Item server\.env.example server\.env
 npm run dev --workspace @agentshield/server
 ```
 
+In a second terminal, start the frontend:
+
+```powershell
+npm run dev --workspace @agentshield/client
+```
+
+During Vite development, `/api` requests are proxied to `http://127.0.0.1:3001`
+by default. Set `VITE_API_PROXY_TARGET` in the client environment to use a
+different backend origin, or set `VITE_API_BASE_URL` to use an explicit API URL.
+
 The sample environment selects `STORAGE_MODE=memory`. To use MongoDB, set
 `STORAGE_MODE=mongodb` and configure `MONGODB_URI` and `MONGODB_DATABASE` in
 `server/.env`. The API reports database availability at `GET /api/health` and
@@ -54,10 +64,11 @@ without persisting raw document text.
 The backend exposes health, S1–S3 demo scenarios, action evaluation, audit
 events, approval listing/decisions, and document inspection/evaluation. The
 scanner uses bounded deterministic patterns, not a comprehensive DLP or
-malware scanner. Credential detection covers selected labeled key/value forms
-and an AWS-style access-key-like pattern; a bare secret-looking value or
-unrecognized format may not be detected. A clean scan is not proof a document
-is safe. Tools operate only on synthetic data; no real filesystem,
+malware scanner. Credential detection covers selected labeled key/value forms,
+bearer tokens, database connection strings, private-key markers, and an
+AWS-style access-key-like pattern; a bare secret-looking value or unrecognized
+format may not be detected. A clean scan is not proof a document is safe.
+Tools operate only on synthetic data; no real filesystem,
 shell, or external network execution is available. Document export is only a
 synthetic simulation and is blocked by default; findings may block or require
 approval. The demo `agentId` and reviewer labels are not authentication.
@@ -76,12 +87,19 @@ HTTPS/public destinations, pins resolved addresses, rejects redirects, and
 permits loopback development URLs only with `AI_ALLOW_LOOPBACK=true`. Never
 expose or commit the API key.
 
-With AI enabled, bounded chunks of extracted text are sent to the configured
-provider after heuristic redaction of recognized email, phone, and credential
-patterns. No file bytes, filename, agent ID, or inspection ID are sent. This
-redaction is not comprehensive; enabling AI shares document content with that
-provider under its data-handling terms. Raw text and raw provider responses
-are not persisted. The report labels disabled or incomplete coverage and AI
-findings remain advisory; deterministic policy is still the sole authority.
-Tests mock the provider and do not verify a live external integration. The
-frontend remains scaffold-level and is not yet an integrated dashboard.
+With AI enabled, only bounded excerpts around deterministic findings and a
+counts-only structure summary are sent to the configured provider; full
+extracted text is never included in a request. Recognized email, phone,
+credential, connection-string, cloud-key, and private-key values are replaced
+with typed placeholders. Redaction is pattern-based and cannot guarantee
+removal of unknown secrets or confidential text inside an allowed excerpt.
+Documents without deterministic finding context are not sent to AI. No file
+bytes, filename, agent ID, or inspection ID are sent. Raw extracted text and
+raw provider responses are not persisted. AI findings remain advisory and
+deterministic policy is still the sole authority.
+Health reports AI as configured, not as proven healthy; actual provider
+failures are returned per inspection using sanitized diagnostics while
+deterministic results remain available. Tests mock the provider and do not
+verify a live external integration. The frontend includes document upload,
+findings and source locations, backend policy evaluation for local analysis
+or synthetic external export, and JSON/printable reports.

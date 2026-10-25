@@ -1,7 +1,8 @@
 import type { AuditStore } from "../config/database.js";
 import { ApiError, AuditUnavailableError } from "../errors.js";
 import type { ApprovalDecisionRequest } from "../schemas/evaluate.schema.js";
-import { createAuditEvent, redact } from "./audit.service.js";
+import { createAuditEvent, sanitizeAuditEvent } from "./audit.service.js";
+import { redactSensitiveText } from "./redaction.js";
 import { evaluatePolicy } from "./policy-engine.js";
 import { executeSyntheticTool, type ToolExecutor } from "./tool-simulator.js";
 import type { Approval, ApprovalStatus } from "../types.js";
@@ -19,7 +20,15 @@ export async function listApprovals(
   store: AuditStore,
   status?: ApprovalStatus,
 ): Promise<Approval[]> {
-  return persist(() => store.listApprovals(status));
+  const approvals = await persist(() => store.listApprovals(status));
+  return approvals.map((approval) => ({
+    ...approval,
+    agentId: redactSensitiveText(approval.agentId),
+    tool: redactSensitiveText(approval.tool),
+    resource: redactSensitiveText(approval.resource),
+    ...(approval.reviewer === undefined ? {} : { reviewer: redactSensitiveText(approval.reviewer) }),
+    ...(approval.note === undefined ? {} : { note: redactSensitiveText(approval.note) }),
+  }));
 }
 
 async function removeUncommittedEvent(store: AuditStore, eventId: string): Promise<void> {
@@ -64,14 +73,14 @@ export async function decideApproval(
     throw new ApiError(500, "INTERNAL_ERROR", "Stored approval is no longer permitted.");
   }
 
-  const reviewer = redact(input.reviewer);
-  const note = input.note === undefined ? undefined : redact(input.note);
+  const reviewer = redactSensitiveText(input.reviewer);
+  const note = input.note === undefined ? undefined : redactSensitiveText(input.note);
   const request = {
     agentId: existing.agentId,
     tool: existing.tool,
     resource: policy.normalizedResource,
   };
-  const event = createAuditEvent({
+  const event = sanitizeAuditEvent(createAuditEvent({
     request,
     decision: "REQUIRE_APPROVAL",
     ruleId: input.decision === "REJECTED"
@@ -84,7 +93,7 @@ export async function decideApproval(
     inspectionId: existing.inspectionId,
     destination: existing.destination,
     type: "APPROVAL_DECISION",
-  });
+  }));
   event.approvalStatus = input.decision;
   event.reviewer = reviewer;
   event.note = note ?? null;
@@ -147,7 +156,18 @@ export async function decideApproval(
   };
 
   return {
-    approval: updatedApproval,
+    approval: {
+      ...updatedApproval,
+      agentId: redactSensitiveText(updatedApproval.agentId),
+      tool: redactSensitiveText(updatedApproval.tool),
+      resource: redactSensitiveText(updatedApproval.resource),
+      ...(updatedApproval.reviewer === undefined ? {} : {
+        reviewer: redactSensitiveText(updatedApproval.reviewer),
+      }),
+      ...(updatedApproval.note === undefined ? {} : {
+        note: redactSensitiveText(updatedApproval.note),
+      }),
+    },
     eventId: event.eventId,
     executed: event.executed,
   };

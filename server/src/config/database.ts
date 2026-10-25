@@ -10,6 +10,7 @@ export interface AuditStore {
   readonly mode: "mongodb" | "memory";
   isHealthy(): Promise<boolean>;
   saveInspection(inspection: InspectionRecord): Promise<void>;
+  deleteInspection(inspectionId: string): Promise<void>;
   getInspection(inspectionId: string): Promise<InspectionRecord | null>;
   saveEvaluation(event: AuditEvent, approval?: Approval): Promise<void>;
   insertEvent(event: AuditEvent): Promise<void>;
@@ -39,6 +40,10 @@ export class MemoryAuditStore implements AuditStore {
 
   async saveInspection(inspection: InspectionRecord): Promise<void> {
     this.inspections.set(inspection.inspectionId, structuredClone(inspection));
+  }
+
+  async deleteInspection(inspectionId: string): Promise<void> {
+    this.inspections.delete(inspectionId);
   }
 
   async getInspection(inspectionId: string): Promise<InspectionRecord | null> {
@@ -148,6 +153,11 @@ export class MongoAuditStore implements AuditStore {
   async saveInspection(inspection: InspectionRecord): Promise<void> {
     await this.ensureConnected();
     await this.inspectionCollection.insertOne({ ...inspection });
+  }
+
+  async deleteInspection(inspectionId: string): Promise<void> {
+    await this.ensureConnected();
+    await this.inspectionCollection.deleteOne({ inspectionId });
   }
 
   async getInspection(inspectionId: string): Promise<InspectionRecord | null> {

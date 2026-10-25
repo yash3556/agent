@@ -14,7 +14,7 @@ export interface AuditEvent {
   agentId: string;
   tool: string;
   resource: string;
-  decision: Decision;
+  decision: Decision | "INSPECTED";
   ruleId: string;
   reason: string;
   executed: boolean;
@@ -22,7 +22,11 @@ export interface AuditEvent {
   inspectionId?: string | null;
   destination?: "local" | "external" | null;
   advisory: Advisory | null;
-  type: "EVALUATION" | "APPROVAL_DECISION";
+  type: "EVALUATION" | "APPROVAL_DECISION" | "DOCUMENT_INSPECTION";
+  documentName?: string;
+  findingCount?: number;
+  reportRiskLevel?: FindingSeverity | "UNKNOWN";
+  reportStatus?: DocumentReportStatus;
   approvalStatus?: "APPROVED" | "REJECTED" | null;
   reviewer?: string | null;
   note?: string | null;
@@ -55,6 +59,8 @@ export interface InspectionFinding {
   location: { page: number | null; line: number | null };
   evidence: string;
   description: string;
+  ruleId?: string;
+  maskedSample?: string;
 }
 
 export type DocumentReportStatus = "COMPLETE" | "DETERMINISTIC_ONLY" | "PARTIAL";
@@ -86,7 +92,7 @@ export interface DocumentSecurityReport {
   coverage: {
     extraction: "COMPLETED";
     deterministic: "COMPLETED" | "INCOMPLETE";
-    ai: "COMPLETED" | "DISABLED" | "INCOMPLETE" | "UNAVAILABLE" | "NO_CONTENT";
+    ai: "COMPLETED" | "DISABLED" | "INCOMPLETE" | "UNAVAILABLE" | "NO_CONTENT" | "NO_FINDING_CONTEXT";
     totalChunks: number;
     completedChunks: number;
     failedChunks: number;

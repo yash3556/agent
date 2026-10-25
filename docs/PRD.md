@@ -84,7 +84,7 @@ they are not authorization tokens.
 | FR-7 | Return canonical S1–S3 scenarios. | Implemented. |
 | FR-8 | List audit events newest first. | Implemented. |
 | FR-9 | List, approve, and reject once; record outcomes; execute only on approval. | Memory/API and local MongoDB concurrent decision tests pass. The conditional approval transition prevents multiple winners, but transition, execution, and final audit are not atomic; execution outcome may be uncertain after a process failure. |
-| FR-10 | Optional validated, timed AI risk advisory with safe fallback. | Not implemented. Current module returns `null` and does not call a provider. |
+| FR-10 | Optional validated, timed AI risk advisory with safe fallback. | Implemented as an optional, bounded provider call. Redacted inputs are schema-validated on return; unavailable, invalid, or timed-out advisory responses return `null` without affecting policy decisions. |
 | FR-11 | UI loading, errors, 503, and disconnected states. | Not implemented; requires frontend/API integration. |
 | FR-12 | Health reports backend, database, storage mode, and AI status. | Implemented. |
 | FR-13 | Audit persistence outage fails closed before tool execution. | Tested with a failing in-memory adapter and an unavailable MongoDB endpoint; stopping/restarting the database service has not been tested. |
