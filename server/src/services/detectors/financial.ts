@@ -26,11 +26,19 @@ function validIban(value: string): boolean {
 export function detectFinancialData(text: string): DetectorMatch[] {
   const matches: DetectorMatch[] = [];
   const seen = new Set<string>();
-  const add = (pattern: RegExp, type: string, ruleId: string, confidence: number, validate: (value: string) => boolean = () => true) => {
+  const add = (
+    pattern: RegExp,
+    type: string,
+    ruleId: string,
+    confidence: number,
+    validate: (value: string) => boolean = () => true,
+    hasContext: (source: string, start: number, end: number) => boolean = () => true,
+  ) => {
     for (const match of text.matchAll(pattern)) {
       const value = match[1] ?? match[0];
       if (!validate(value)) continue;
       const start = (match.index ?? 0) + match[0].indexOf(value);
+      if (!hasContext(text, start, start + value.length)) continue;
       const key = value.replace(/[\s-]/g, "").toUpperCase();
       if (seen.has(key)) continue;
       seen.add(key);
@@ -41,7 +49,18 @@ export function detectFinancialData(text: string): DetectorMatch[] {
     }
   };
 
-  add(/(?<!\d)(?:\d[ -]?){13,19}(?!\d)/g, "PAYMENT_CARD", "luhn-card-v1", 0.98, validLuhn);
+  add(
+    /(?<!\d)(?:\d[ -]?){13,19}(?!\d)/g,
+    "PAYMENT_CARD",
+    "luhn-card-v1",
+    0.98,
+    validLuhn,
+    (source, start) => {
+      const context = source.slice(Math.max(0, start - 48), start);
+      return /\b(?:(?:credit|debit|payment)\s+card|card)(?:\s+(?:number|no\.?))?\s*(?:[:=#]\s*|\s+)$/i.test(context)
+        || /\b(?:cc|cvv|cvc)\s*(?:number|no\.?|#|:|=)\s*$/i.test(context);
+    },
+  );
   add(/\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b/gi, "IBAN", "iban-mod97-v1", 0.98, validIban);
   add(/\b(?:0[1-9]|[12]\d|3[0-8])[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]\b/gi, "GSTIN", "gstin-format-v1", 0.9);
   add(/\b(?:bank\s+)?(?:account|acct|a\/c)(?:\s+(?:number|no\.?))?\s*[:#=-]?\s*(\d{8,18})\b/gi, "BANK_ACCOUNT", "bank-account-context-v1", 0.9);

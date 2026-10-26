@@ -102,7 +102,8 @@ unavailable.
   "time": "2026-10-24T10:00:00.000Z",
   "db": "connected",
   "storage": "memory",
-  "ai": "disabled"
+  "ai": "disabled",
+  "aiRequest": null
 }
 ```
 
@@ -111,8 +112,11 @@ unavailable.
 mean a live provider request has succeeded; AI completion is reported per
 inspection. **[Additional field]** `storage` reports `"mongodb"` or
 `"memory"` so clients can distinguish a working but non-persistent development
-store from MongoDB persistence. Do not expose connection strings or internal
-errors.
+store from MongoDB persistence. `aiRequest` is `null` unless AI is configured;
+otherwise it reports the non-secret provider, model, hostname, endpoint suffix,
+request parameter names, and response-format mode. It never contains the API
+key, prompt, document excerpt, or provider response. Do not expose connection
+strings or internal errors.
 
 ### `GET /api/scenarios`
 
@@ -306,14 +310,15 @@ the security report is complete.
 
 Report findings identify their `source` as `DETERMINISTIC` or `AI`. The legacy
 `findings` and `summary` fields remain deterministic-only. AI findings are
-advisory and are not policy inputs. Evidence references contain page, line, and
-chunk coordinates only; raw evidence quotes are not returned.
+advisory and are not policy inputs. Evidence is a bounded redacted excerpt with page, extracted-line, and chunk coordinates; `report.documentCoverage` lists parser scope/limits, while `report.aiScope` reports AI status, submitted excerpts, up to 100 locations, and confirms the full document was not reviewed.
 
 The frontend can request policy evaluation for local analysis or a synthetic
 external export using the returned `inspectionId`. The backend returns the
 authoritative `ALLOW`, `BLOCK`, or `REQUIRE_APPROVAL` result and records an
 audit event. AI findings do not alter that decision. No real external export is
-performed.
+performed. The downloadable JSON report keeps its finding-based advisory
+suggestion separate from `policyDecision`; the suggestion is non-binding, while
+an evaluated backend decision is authoritative.
 
 Only a hash, bounded metadata, redacted deterministic findings, the bounded
 sanitized report, and expiry are persisted. Raw upload, extracted text,

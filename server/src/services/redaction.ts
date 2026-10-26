@@ -1,6 +1,8 @@
 const privateKeyBlock = /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/gi;
+const obfuscatedEmail = /(?<![\w.%+-])[A-Z0-9._%+-]+\s*(?:\[\s*at\s*\]|\(\s*at\s*\)|\bat\b)\s*[A-Z0-9-]+(?:(?:\s*(?:\[\s*dot\s*\]|\(\s*dot\s*\)|\bdot\b)\s*|\.)[A-Z0-9-]+)*(?:\s*(?:\[\s*dot\s*\]|\(\s*dot\s*\)|\bdot\b)\s*|\.)[A-Z]{2,}\b/gi;
 
 const sensitiveValuePatterns: Array<{ expression: RegExp; replacement: string }> = [
+  { expression: obfuscatedEmail, replacement: "[REDACTED_EMAIL]" },
   {
     expression: /\b(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis|amqp|jdbc:[a-z]+):\/\/[^\s"'<>;,]+/gi,
     replacement: "[REDACTED_CONNECTION_STRING]",
@@ -36,6 +38,10 @@ const sensitiveValuePatterns: Array<{ expression: RegExp; replacement: string }>
   {
     expression: /(?<![\w.:/@+-])\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
     replacement: "[REDACTED_EMAIL]",
+  },
+  {
+    expression: /(?<!\w)[A-Z]{5}\d{4}[A-Z](?!\w)/gi,
+    replacement: "[REDACTED_PAN]",
   },
   {
     expression: /(?<!\d)(?:\+\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)/g,

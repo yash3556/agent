@@ -26,7 +26,7 @@ interface Detector {
 
 const detectors: Detector[] = [
   {
-    expression: /(?<![\w.:/@+-])\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+    expression: /(?<![\w.:/@+-])(?:\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b[A-Z0-9._%+-]+\s*(?:\[\s*at\s*\]|\(\s*at\s*\)|\bat\b)\s*[A-Z0-9-]+(?:(?:\s*(?:\[\s*dot\s*\]|\(\s*dot\s*\)|\bdot\b)\s*|\.)[A-Z0-9-]+)*(?:\s*(?:\[\s*dot\s*\]|\(\s*dot\s*\)|\bdot\b)\s*|\.)[A-Z]{2,}\b)/gi,
     category: "PERSONAL_DATA",
     type: "EMAIL_ADDRESS",
     severity: "MEDIUM",

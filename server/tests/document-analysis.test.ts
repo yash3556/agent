@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createDocumentAnalyzer,
   createOpenAICompatibleProvider,
+  getAIRequestSummary,
   getDocumentAIStatus,
   hasSafeAIBaseURLShape,
   resolveSafeAIAddresses,
@@ -66,12 +67,21 @@ describe("AI-assisted document analysis", () => {
       loopback: process.env.AI_ALLOW_LOOPBACK,
     };
     process.env.AI_PROVIDER = "openai-compatible";
-    process.env.AI_BASE_URL = "https://api.example.test/v1";
-    process.env.AI_MODEL = "test-model";
+    process.env.AI_BASE_URL = "https://api.groq.com/openai/v1";
+    process.env.AI_MODEL = "openai/gpt-oss-20b";
     process.env.AI_API_KEY = "placeholder-test-key";
     delete process.env.AI_ALLOW_LOOPBACK;
     try {
       expect(getDocumentAIStatus()).toBe("configured");
+      expect(getAIRequestSummary()).toEqual({
+        provider: "openai-compatible",
+        hostname: "api.groq.com",
+        model: "openai/gpt-oss-20b",
+        endpointPathSuffix: "/chat/completions",
+        requestParameters: ["model", "messages", "response_format"],
+        responseFormat: "json_schema_strict",
+      });
+      expect(JSON.stringify(getAIRequestSummary())).not.toContain("placeholder-test-key");
     } finally {
       if (previous.provider === undefined) delete process.env.AI_PROVIDER;
       else process.env.AI_PROVIDER = previous.provider;
@@ -192,7 +202,10 @@ describe("AI-assisted document analysis", () => {
     }, async (_endpoint, _apiKey, body) => {
       requestBody = body;
       return JSON.stringify({
-        choices: [{ message: { content: JSON.stringify({ findings: [] }) } }],
+        choices: [{ message: { content: JSON.stringify({
+          findings: [],
+          documentSummary: { topics: [], purpose: "MIXED_OR_UNCLEAR", summary: "No supported subject was identified." },
+        }) } }],
       });
     });
     const source = [
@@ -435,6 +448,141 @@ describe("AI-assisted document analysis", () => {
     expect(result.report.findings.some(({ source: findingSource }) => findingSource === "AI")).toBe(false);
   });
 
+  it("classifies safe provider response failures and requests strict schema for GPT-OSS", async () => {
+    const chunk = { index: 1, lines: [{ segment: 0, page: 1, line: 1, text: "Synthetic receipt total: 12.00" }] };
+    const validContent = JSON.stringify({ findings: [], documentSummary: { topics: ["FINANCIAL"], purpose: "RECORD", summary: "A receipt records a total." } });
+    let requestBody: any;
+    const provider = (envelope: unknown) => createOpenAICompatibleProvider({
+      baseUrl: "https://api.groq.com/openai/v1",
+      model: "openai/gpt-oss-20b",
+      apiKey: "synthetic-test-key",
+    }, async (endpoint, _apiKey, body) => {
+      expect(endpoint.hostname).toBe("api.groq.com");
+      expect(endpoint.pathname).toBe("/openai/v1/chat/completions");
+      requestBody = JSON.parse(body);
+      return { body: JSON.stringify(envelope), statusCode: 200 };
+    });
+    const signal = new AbortController().signal;
+    const valid = await provider({ choices: [{ finish_reason: "stop", message: { content: validContent } }] }).analyzeChunk(chunk, signal);
+    expect(valid).toEqual([]);
+    expect(valid.documentSummary).toMatchObject({ topics: ["FINANCIAL"], purpose: "RECORD" });
+    expect(requestBody.response_format).toMatchObject({
+      type: "json_schema",
+      json_schema: { strict: true, schema: { required: ["findings", "documentSummary"], additionalProperties: false } },
+    });
+    expect(requestBody.response_format.json_schema.schema.properties.findings.items.additionalProperties).toBe(false);
+    expect(requestBody.response_format.json_schema.schema.properties.findings.items.required)
+      .toEqual(["category", "type", "severity", "confidence", "explanation", "recommendation", "evidenceReferences"]);
+    const topicSchema = requestBody.response_format.json_schema.schema.properties.documentSummary.properties.topics;
+    expect(topicSchema).toEqual({
+      type: "array",
+      maxItems: 4,
+      items: { type: "string", enum: ["BUSINESS", "FINANCIAL", "IDENTITY", "CONTRACT", "CONTACTS", "OPERATIONS", "CORRESPONDENCE"] },
+    });
+    expect(requestBody.messages[0].content).toContain("Choose zero to four topics");
+    expect(requestBody.messages[0].content).toContain("BUSINESS, FINANCIAL, IDENTITY, CONTRACT, CONTACTS, OPERATIONS, CORRESPONDENCE");
+    const assertStrictSchema = (schema: any): void => {
+      if (schema.type === "object") {
+        expect(schema.additionalProperties).toBe(false);
+        expect(schema.required).toEqual(Object.keys(schema.properties));
+        Object.values(schema.properties).forEach(assertStrictSchema);
+      } else if (schema.type === "array") {
+        assertStrictSchema(schema.items);
+      } else if (Array.isArray(schema.type)) {
+        expect(schema.type).toEqual(["integer", "null"]);
+      } else {
+        expect(["string", "number", "integer"]).toContain(schema.type);
+      }
+    };
+    assertStrictSchema(requestBody.response_format.json_schema.schema);
+
+    const rejects = async (envelope: unknown, code: string, contentPresent: boolean) => {
+      const caught = await provider(envelope).analyzeChunk(chunk, signal).catch((error) => error);
+      expect(caught.aiFailure).toMatchObject({ code, diagnostics: { httpStatus: 200, contentPresent } });
+      return caught.aiFailure;
+    };
+    const malformed = await rejects({ choices: [{ finish_reason: "stop", message: { content: "not-json" } }] }, "INVALID_RESPONSE", true);
+    expect(malformed.diagnostics.responseLength).toBe(8);
+    const invalidContent = JSON.stringify({ findings: [], documentSummary: {} });
+    const mismatch = await rejects({ choices: [{ finish_reason: "stop", message: { content: invalidContent } }] }, "INVALID_RESPONSE", true);
+    expect(mismatch.diagnostics.validationPaths).toContain("documentSummary.topics");
+    expect(mismatch.diagnostics.validationDetails).toEqual([{
+      path: "documentSummary.topics",
+      expectedType: "array of supported topic enum values (max 4)",
+      receivedType: "missing",
+      invalidEnumValue: false,
+    }]);
+    const rejectsContent = async (content: unknown) => rejects({
+      choices: [{ finish_reason: "stop", message: { content: JSON.stringify(content) } }],
+    }, "INVALID_RESPONSE", true);
+    const wrongTopicType = await rejectsContent({
+      findings: [], documentSummary: { topics: "FINANCIAL", purpose: "RECORD", summary: "A synthetic sample." },
+    });
+    expect(wrongTopicType.diagnostics.validationDetails?.[0]).toMatchObject({
+      receivedType: "string", invalidEnumValue: false,
+    });
+    const unknownTopic = await rejectsContent({
+      findings: [], documentSummary: { topics: ["PEOPLE"], purpose: "RECORD", summary: "A synthetic sample." },
+    });
+    expect(unknownTopic.diagnostics.validationDetails?.[0]).toMatchObject({
+      receivedType: "array<string>", invalidEnumValue: true,
+    });
+    const missingSummary = await rejectsContent({
+      findings: [], documentSummary: { topics: ["FINANCIAL"], purpose: "RECORD" },
+    });
+    expect(missingSummary.diagnostics.validationPaths).toContain("documentSummary.summary");
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await analyzeText(createDocumentAnalyzer(provider({ choices: [{ finish_reason: "stop", message: { content: invalidContent } }] })), "synthetic safe content");
+    await analyzeText(createDocumentAnalyzer(provider({
+      choices: [{
+        finish_reason: "stop",
+        message: { content: JSON.stringify({
+          findings: [],
+          documentSummary: { topics: ["PRIVATE_TOPIC_SENTINEL"], purpose: "RECORD", summary: "Synthetic summary." },
+        }) },
+      }],
+    })), "synthetic safe content");
+    const log = JSON.stringify(warning.mock.calls);
+    expect(log).toContain("documentSummary.topics");
+    expect(log).toContain("expectedType");
+    expect(log).toContain("receivedType");
+    expect(log).toContain('"invalidEnumValue":true');
+    expect(log).toContain('"httpStatus":200');
+    expect(log).not.toContain("PRIVATE_TOPIC_SENTINEL");
+    expect(log).not.toContain("synthetic safe content");
+    await rejects({ choices: [{ finish_reason: "stop", message: { content: "" } }] }, "INVALID_RESPONSE", false);
+    await rejects({ choices: [{ finish_reason: "stop", message: { content: null, refusal: "private response" } }] }, "MODEL_REFUSAL", false);
+    await rejects({ choices: [{ finish_reason: "length", message: { content: validContent } }] }, "TRUNCATED_RESPONSE", true);
+  });
+
+  it("validates consecutive provider responses without carrying topics across requests", async () => {
+    const contents = [
+      { findings: [], documentSummary: { topics: ["FINANCIAL"], purpose: "RECORD", summary: "Synthetic receipt." } },
+      { findings: [], documentSummary: { topics: ["IDENTITY"], purpose: "RECORD", summary: "Synthetic identity sample." } },
+    ];
+    const provider = createOpenAICompatibleProvider({
+      baseUrl: "https://api.groq.com/openai/v1",
+      model: "openai/gpt-oss-20b",
+      apiKey: "synthetic-test-key",
+    }, async (_endpoint, _apiKey, body) => {
+      expect(JSON.parse(body).response_format.json_schema.strict).toBe(true);
+      const next = contents.shift();
+      if (!next) throw new Error("Unexpected extra provider call.");
+      return {
+        body: JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: JSON.stringify(next) } }],
+        }),
+        statusCode: 200,
+      };
+    });
+    const chunk = { index: 1, lines: [{ segment: 0, page: 1, line: 1, text: "Synthetic data." }] };
+    const first = await provider.analyzeChunk(chunk, new AbortController().signal);
+    const second = await provider.analyzeChunk(chunk, new AbortController().signal);
+    expect(first.documentSummary?.topics).toEqual(["FINANCIAL"]);
+    expect(second.documentSummary?.topics).toEqual(["IDENTITY"]);
+    expect(contents).toHaveLength(0);
+  });
+
   it("redacts sensitive data echoed in provider-generated report fields", async () => {
     const provider: DocumentAIProvider = {
       async analyzeChunk() {
@@ -501,7 +649,10 @@ describe("AI-assisted document analysis", () => {
     }, async (requestEndpoint) => {
       endpoint = requestEndpoint.toString();
       return JSON.stringify({
-        choices: [{ message: { content: JSON.stringify({ findings: [] }) } }],
+        choices: [{ message: { content: JSON.stringify({
+          findings: [],
+          documentSummary: { topics: [], purpose: "MIXED_OR_UNCLEAR", summary: "No supported subject was identified." },
+        }) } }],
       });
     });
     const result = await provider.analyzeChunk(
@@ -541,6 +692,7 @@ describe("AI-assisted document analysis", () => {
   });
 
   it.each([
+    [400, "REQUEST_REJECTED", "invalid_request_error", "json_validate_failed"],
     [401, "AUTHENTICATION_FAILED", "invalid_request_error", "invalid_api_key"],
     [403, "ACCESS_DENIED", "permission_error", "insufficient_permissions"],
     [404, "MODEL_OR_ENDPOINT_NOT_FOUND", "invalid_request_error", "model_not_found"],
@@ -561,7 +713,9 @@ describe("AI-assisted document analysis", () => {
         error: {
           ...(errorType ? { type: errorType } : {}),
           ...(errorCode ? { code: errorCode } : {}),
-          message: "private provider detail",
+          message: status === 400
+            ? "Invalid response_format: unsupported JSON schema keyword; private detail"
+            : "private provider detail",
         },
       }));
     });
@@ -575,10 +729,19 @@ describe("AI-assisted document analysis", () => {
         apiKey: "test-secret",
         allowLoopback: true,
       }));
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
       const result = await analyzeText(analyzer, "ordinary text");
       expect(result.aiAdvisory).toBe("UNAVAILABLE");
       expect(result.aiFailure).toMatchObject({
         code,
+        diagnostics: {
+          httpStatus: status,
+          ...(status === 400 ? {
+            providerErrorType: "invalid_request_error",
+            providerMessageCategory: "SCHEMA_REJECTED",
+          } : {}),
+          ...(errorCode ? { providerErrorCode: errorCode } : {}),
+        },
         providerResponse: {
           statusCode: status,
           retryAfter: "12",
@@ -588,7 +751,15 @@ describe("AI-assisted document analysis", () => {
         },
       });
       expect(JSON.stringify(result)).not.toContain("private provider detail");
+      expect(JSON.stringify(result)).not.toContain("unsupported JSON schema keyword");
       expect(JSON.stringify(result)).not.toContain("test-secret");
+      if (status === 400) {
+        expect(JSON.stringify(result)).toContain('"code":"REQUEST_REJECTED"');
+        const log = JSON.stringify(warning.mock.calls);
+        expect(log).toContain("SCHEMA_REJECTED");
+        expect(log).not.toContain("unsupported JSON schema keyword");
+        expect(log).not.toContain("private detail");
+      }
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }

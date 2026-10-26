@@ -20,6 +20,24 @@ function pageFromPath(): Page {
   return ["dashboard", "approvals", "audit", "documents", "system"].includes(match) ? match : "simulator";
 }
 function dateTime(value: string) { return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
+function aiFailureLabel(code: string) {
+  const labels: Record<string, string> = {
+    TIMEOUT: "AI provider timed out", INVALID_RESPONSE: "AI provider returned an invalid response",
+    CONNECTION_FAILED: "AI provider connection failed", DNS_FAILED: "AI provider address could not be resolved",
+    DESTINATION_REJECTED: "AI provider destination was rejected", AUTHENTICATION_FAILED: "AI provider authentication failed",
+    RATE_LIMITED: "AI provider rate limit reached", CREDITS_EXHAUSTED: "AI provider quota exhausted",
+    PROVIDER_LIMIT_REACHED: "AI provider usage limit reached", MODEL_OR_ENDPOINT_NOT_FOUND: "AI model or endpoint was not found",
+    PROVIDER_ERROR: "AI provider returned an error", PROVIDER_UNAVAILABLE: "AI provider is unavailable",
+    ANALYSIS_LIMIT: "AI analysis reached its configured limit",
+  };
+  return labels[code] ? `${labels[code]} (${code})` : "AI analysis did not complete";
+}
+function recommendedAction(category: string, existing: string) {
+  if (category === "CREDENTIAL") return "If active or exposed, rotate the credential through its issuer and review dependent integrations.";
+  if (category === "PERSONAL_DATA") return "Confirm authorization and need-to-know; redact personal data before disclosure.";
+  if (category === "SUSPICIOUS_INSTRUCTION") return "Treat instruction-like text as untrusted and verify requested actions through a trusted channel.";
+  return existing;
+}
 function ago(value: string) {
   const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
   if (seconds < 60) return "Just now";
@@ -266,7 +284,13 @@ function DocumentInspection({ onApprovals, onActionEvaluated }: { onApprovals: (
       analysis: result.analysis,
       report: result.report,
       deterministicSummary: result.summary,
+      advisorySuggestion: {
+        decision: reportSuggestion,
+        source: "report findings",
+        authoritative: false,
+      },
       policyDecision: policyResult ? {
+        authority: "backend policy engine",
         decision: policyResult.decision,
         ruleId: policyResult.ruleId,
         reason: policyResult.reason,
@@ -295,6 +319,14 @@ function DocumentInspection({ onApprovals, onActionEvaluated }: { onApprovals: (
       || (leftReference?.line ?? 0) - (rightReference?.line ?? 0)
       || (leftReference?.chunk ?? 0) - (rightReference?.chunk ?? 0);
   }) : [];
+  const prioritizedRecommendations = result ? [...new Set([...result.report.findings]
+    .sort((left, right) => ["CRITICAL", "HIGH", "MEDIUM", "LOW"].indexOf(left.severity)
+      - ["CRITICAL", "HIGH", "MEDIUM", "LOW"].indexOf(right.severity))
+    .map((finding) => recommendedAction(finding.category, finding.recommendation)))] : [];
+  const policyLabel = policyResult ? `${policyResult.decision} · ${policyResult.ruleId}` : "No action evaluated";
+  const reportSuggestion = hasInstructionRisk || result?.report.findings.some((finding) => finding.category === "CREDENTIAL")
+    ? "BLOCK"
+    : hasSensitiveRisk ? "HUMAN REVIEW" : "EVALUATE";
 
   return <>
     <div className="page-intro"><div><span className="eyebrow">DOCUMENT SECURITY</span><h1>Document inspection</h1><p>Upload a document for bounded extraction and security scanning.</p></div></div>
@@ -317,19 +349,26 @@ function DocumentInspection({ onApprovals, onActionEvaluated }: { onApprovals: (
         ? `${result.analysis.aiFailure.code === "ANALYSIS_LIMIT" ? "AI analysis incomplete" : "AI analysis failed"} — deterministic scan completed.`
         : result.report.summary}</p>
       <div className="inspection-meta"><span>Inspection ID <code>{result.inspectionId}</code></span><span>{result.summary.totalFindings} deterministic finding{result.summary.totalFindings === 1 ? "" : "s"}</span><span>AI analysis: {result.analysis.aiAdvisory === "AVAILABLE" ? "completed" : result.analysis.aiAdvisory === "NOT_NEEDED" ? "not run (no safe finding context)" : result.analysis.aiAdvisory === "DISABLED" ? "disabled" : result.analysis.aiFailure ? "failed" : "unavailable"}</span><span>Extraction: {result.report.coverage.extraction.toLowerCase()}</span><span>Coverage: {result.report.coverage.deterministic.toLowerCase()} deterministic · {result.report.coverage.completedChunks}/{result.report.coverage.totalChunks} AI chunks completed · {result.report.coverage.failedChunks} failed</span></div>
+      <div className="report-detail-grid">
+        <article className="report-detail-card"><h3>Document Summary</h3><p><strong>{result.report.documentCoverage.format.toUpperCase()}</strong> · {result.document.originalName}</p><p>{result.report.documentCoverage.extractedPages === null ? `${result.report.documentCoverage.textSegments} extracted text segment(s); page count is not available.` : `${result.report.documentCoverage.extractedPages} pages extracted; ${result.report.documentCoverage.inspectedPages} pages inspected.`}</p><p><strong>{result.report.documentSummary.status === "AI_EXCERPTS" ? "AI summary of selected sanitized excerpts" : "Content summary unavailable"}</strong></p><p>{result.report.documentSummary.text}</p><p>Coverage: deterministic scanning processed all extracted text. This summary is distinct from security findings and does not cover every page semantically.</p>{result.report.documentCoverage.limitations.map((limitation) => <small key={limitation}>{limitation}</small>)}</article>
+        <article className="report-detail-card"><h3>Security Overview</h3><p>Risk level: <strong>{result.report.riskLevel}</strong> · {result.report.findings.length} report finding(s)</p><p>Finding-based suggestion (non-binding): <strong>{reportSuggestion}</strong></p><p>Backend policy decision (authoritative): <strong>{policyLabel}</strong></p><p>AI findings are advisory; only deterministic findings drive backend policy.</p></article>
+        <article className="report-detail-card"><h3>AI Analysis Scope</h3><p>Status: <strong>{result.report.aiScope.status}</strong> · {result.report.aiScope.submittedChunks} sanitized excerpt chunk(s) submitted.</p><p>{result.report.aiScope.submittedChunks ? "When called, AI received redacted, bounded excerpts only." : "No excerpts were submitted to AI."} The complete document was not reviewed by AI; this is not a complete semantic summary of every page.</p><small>Excerpt locations: {result.report.aiScope.locations.length ? result.report.aiScope.locations.map((location) => `${location.page === null ? "text" : `page ${location.page}`}, line ${location.line}`).join("; ") : "None recorded."}{result.report.aiScope.locationsTruncated ? " · Showing first 100 locations." : ""}</small></article>
+      </div>
+      <section className="finding-section"><h3>Sensitive Findings</h3>
       <div className="report-summary-grid">
         <div><span>Threat findings</span><strong>{result.report.findings.length}</strong></div>
         <div><span>Sensitive-data indicators</span><strong>{result.report.findings.filter((finding) => ["PERSONAL_DATA", "CREDENTIAL"].includes(finding.category)).length}</strong></div>
-        <div><span>Analysis coverage</span><strong>{result.report.coverage.totalChunks === 0 ? "No text" : `${Math.round(result.report.coverage.completedChunks / result.report.coverage.totalChunks * 100)}%`}</strong><small>{result.report.coverage.completedChunks} / {result.report.coverage.totalChunks} chunks analyzed</small></div>
-        <div><span>Recommended policy action</span><strong>{hasInstructionRisk || result.report.findings.some((finding) => finding.category === "CREDENTIAL") ? "BLOCK" : hasSensitiveRisk ? "HUMAN REVIEW" : "EVALUATE"}</strong><small>Recommendation only; backend policy decides</small></div>
+        <div><span>AI analysis completion</span><strong>{result.report.aiScope.submittedChunks === 0 ? "Not called" : `${Math.round(result.report.coverage.completedChunks / result.report.aiScope.submittedChunks * 100)}%`}</strong><small>{result.report.coverage.completedChunks} completed · {result.report.coverage.failedChunks} failed of {result.report.aiScope.submittedChunks} submitted chunks</small></div>
+        <div><span>Finding-based suggestion · Non-binding</span><strong>{reportSuggestion}</strong><small>Not a policy decision. Authoritative backend result: {policyLabel}</small></div>
         {(["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const).map((severity) => <div key={severity}><span>{severity} findings</span><strong>{result.report.findings.filter((finding) => finding.severity === severity).length}</strong></div>)}
       </div>
+      <article className="report-detail-card recommendations"><h3>Recommended Actions</h3>{prioritizedRecommendations.length ? <ol>{prioritizedRecommendations.map((recommendation) => <li key={recommendation}>{recommendation}</li>)}</ol> : <p>No finding-specific remediation was generated; review the document before sharing.</p>}</article>
       {(hasInstructionRisk || hasSensitiveRisk) && <aside className="threat-correlation"><strong>Why this may be risky</strong><p>{hasInstructionRisk && hasSensitiveRisk
         ? "Instruction-like content and sensitive-data indicators co-occur in this document. Together they can increase the risk of unauthorized disclosure; this correlation is a heuristic, not proof of intent."
         : hasInstructionRisk
           ? "Instruction-like content may attempt to influence an agent's task or tool use. Treat document contents as untrusted input."
           : "Sensitive-data indicators were found. Verify authorization and destination before sharing; credentials should be rotated if they were exposed."}</p></aside>}
-      {result.analysis.aiFailure && <ErrorBanner>{result.analysis.aiFailure.message} Deterministic findings are still available; AI output is advisory only.</ErrorBanner>}
+      {result.analysis.aiFailure && <ErrorBanner>{aiFailureLabel(result.analysis.aiFailure.code)}. Deterministic inspection completed; AI output is advisory only.</ErrorBanner>}
       <section className="policy-evaluation">
         <div><span className="eyebrow">BACKEND ENFORCEMENT</span><h3>Evaluate a requested action</h3><p>AI findings are advisory. The backend policy engine alone returns ALLOW, BLOCK, or REQUIRE_APPROVAL.</p></div>
         <div className="report-actions"><button className="primary-button" type="button" disabled={policyBusy} onClick={() => void evaluateAction("analyze_document", "local")}>Evaluate local analysis</button><button className="outline-button" type="button" disabled={policyBusy} onClick={() => void evaluateAction("export_report", "external")}>Evaluate external export</button></div>
@@ -342,13 +381,12 @@ function DocumentInspection({ onApprovals, onActionEvaluated }: { onApprovals: (
       </section>}
       {result.report.truncated && <ErrorBanner>Some findings were omitted because the report reached its result limit.</ErrorBanner>}
       {result.report.findings.length === 0 ? <EmptyState title="No findings reported." detail="A clean scan is not proof that the document is safe." /> : <div className="inspection-findings">{timelineFindings.map((finding) => <article className="inspection-finding" key={finding.id}>
-        <div><span className={`risk-pill risk-${finding.severity.toLowerCase()}`}>{finding.severity}</span><strong>{finding.type.replaceAll("_", " ")}</strong><span className="finding-source">{finding.source}</span></div>
+        <div><span className={`risk-pill risk-${finding.severity.toLowerCase()}`}>{finding.severity}</span><strong>{finding.type.replaceAll("_", " ")}</strong><span className="finding-source">{finding.category.replaceAll("_", " ")} · {finding.source}</span></div>
         <p>{finding.explanation}</p><p className="muted">{finding.recommendation}</p>
-        <details><summary>Evidence viewer</summary><p>{finding.source === "DETERMINISTIC"
-          ? result.findings.find((item) => item.type === finding.type && item.location.page === finding.evidenceReferences[0]?.page && item.location.line === finding.evidenceReferences[0]?.line)?.evidence ?? "Redacted evidence marker unavailable."
-          : "Raw excerpts are withheld; AI evidence is represented by source coordinates only."}</p></details>
+        <details open><summary>Evidence &amp; Locations</summary><p><code>{finding.evidence}</code></p><small>Confidence {(finding.confidence * 100).toFixed(0)}%{finding.ruleId ? ` · Rule ${finding.ruleId}` : ""}</small></details>
         {finding.evidenceReferences.length > 0 && <small>Threat timeline: {finding.evidenceReferences.map((reference) => [reference.page !== null ? `page ${reference.page}` : null, reference.line ? `line ${reference.line}` : null, reference.chunk !== null ? `chunk ${reference.chunk}` : null].filter(Boolean).join(", ")).join("; ")}</small>}
       </article>)}</div>}
+      </section>
     </section>}
   </>;
 }

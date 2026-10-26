@@ -73,14 +73,36 @@ export interface DocumentReportFinding {
   type: string;
   severity: FindingSeverity;
   confidence: number;
+  ruleId?: string;
   explanation: string;
   recommendation: string;
+  evidence: string;
   evidenceReferences: Array<{
     page: number | null;
     line: number;
     chunk: number | null;
   }>;
 }
+
+export type DocumentDocumentCoverage = {
+  format: string; extractedPages: number | null; inspectedPages: number | null; textSegments: number;
+  limitations: string[];
+};
+
+export type DocumentSummaryTopic = "BUSINESS" | "FINANCIAL" | "IDENTITY" | "CONTRACT" | "CONTACTS" | "OPERATIONS" | "CORRESPONDENCE";
+export type DocumentSummaryPurpose = "PLAN" | "RECORD" | "AGREEMENT" | "COMMUNICATION" | "INSTRUCTIONS" | "MIXED_OR_UNCLEAR";
+export type DocumentContentSummary = {
+  status: "AI_EXCERPTS" | "DETERMINISTIC_FALLBACK" | "UNAVAILABLE";
+  topics: DocumentSummaryTopic[];
+  purpose: DocumentSummaryPurpose;
+  text: string;
+};
+
+export type DocumentAIScope = {
+  status: "COMPLETED" | "PARTIAL" | "DISABLED" | "UNAVAILABLE" | "SKIPPED"; submittedChunks: number;
+  locations: Array<{ page: number | null; line: number }>; locationsTruncated: boolean; boundedRedactedExcerpts: true;
+  completeDocumentReviewed: false;
+};
 
 export interface DocumentSecurityReport {
   version: 1;
@@ -89,6 +111,9 @@ export interface DocumentSecurityReport {
   summary: string;
   truncated: boolean;
   findings: DocumentReportFinding[];
+  documentSummary?: DocumentContentSummary;
+  documentCoverage?: DocumentDocumentCoverage;
+  aiScope: DocumentAIScope;
   coverage: {
     extraction: "COMPLETED";
     deterministic: "COMPLETED" | "INCOMPLETE";

@@ -9,7 +9,7 @@ import { createEventsRouter } from "./routes/events.routes.js";
 import { createDocumentsRouter } from "./routes/documents.routes.js";
 import type { Scenario } from "./types.js";
 import { executeSyntheticTool, type ToolExecutor } from "./services/tool-simulator.js";
-import type { DocumentAnalyzer } from "./ai/document-analysis.js";
+import { getAIRequestSummary, type DocumentAnalyzer } from "./ai/document-analysis.js";
 
 const scenarios: Scenario[] = [
   {
@@ -54,6 +54,7 @@ export function createApp(store: AuditStore, options: AppOptions = {}) {
         db: await store.isHealthy() ? "connected" : "error",
         storage: store.mode,
         ai: getAiStatus(),
+        aiRequest: getAIRequestSummary(),
       });
     } catch (error) {
       next(error);

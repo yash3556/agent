@@ -1,8 +1,14 @@
 import { DOMParser } from "@xmldom/xmldom";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
+import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
 import { isMainThread, parentPort, workerData } from "node:worker_threads";
 import yauzl, { type Entry, type ZipFile } from "yauzl";
 import type { TextSegment } from "./content-scanner.js";
+
+const pdfjsEntry = createRequire(import.meta.url).resolve("pdfjs-dist/legacy/build/pdf.mjs");
+export const standardFontDataUrl =
+  `${resolve(dirname(pdfjsEntry), "../../standard_fonts").replace(/\\/g, "/")}/`;
 
 const MAX_EXTRACTED_TEXT_BYTES = 1024 * 1024;
 const MAX_DOCX_ENTRIES = 500;
@@ -218,6 +224,7 @@ async function parsePdf(buffer: Buffer): Promise<TextSegment[]> {
     useSystemFonts: false,
     stopAtErrors: true,
     maxImageSize: 0,
+    standardFontDataUrl,
   });
   try {
     const document = await loadingTask.promise;

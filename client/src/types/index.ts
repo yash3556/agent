@@ -85,7 +85,18 @@ export type InspectionResponse = {
   analysis: {
     deterministic: "COMPLETED";
     aiAdvisory: "DISABLED" | "UNAVAILABLE" | "AVAILABLE" | "NOT_NEEDED";
-    aiFailure?: { code: string; message: string };
+    aiFailure?: {
+      code: string;
+      diagnostics?: {
+        httpStatus?: number;
+        providerErrorCode?: string;
+        finishReason?: string;
+        contentPresent?: boolean;
+        responseLength?: number;
+        validationPaths?: string[];
+      };
+      providerResponse?: { statusCode: number };
+    };
   };
   report: {
     version: 1;
@@ -100,10 +111,33 @@ export type InspectionResponse = {
       type: string;
       severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
       confidence: number;
+      ruleId?: string;
       explanation: string;
       recommendation: string;
+      evidence: string;
       evidenceReferences: { page: number | null; line: number; chunk: number | null }[];
     }[];
+    documentCoverage: {
+      format: string;
+      extractedPages: number | null;
+      inspectedPages: number | null;
+      textSegments: number;
+      limitations: string[];
+    };
+    documentSummary: {
+      status: "AI_EXCERPTS" | "DETERMINISTIC_FALLBACK" | "UNAVAILABLE";
+      topics: string[];
+      purpose: string;
+      text: string;
+    };
+    aiScope: {
+      status: "COMPLETED" | "PARTIAL" | "DISABLED" | "UNAVAILABLE" | "SKIPPED";
+      submittedChunks: number;
+      locations: { page: number | null; line: number }[];
+      locationsTruncated: boolean;
+      boundedRedactedExcerpts: true;
+      completeDocumentReviewed: false;
+    };
     coverage: {
       extraction: "COMPLETED";
       deterministic: "COMPLETED" | "INCOMPLETE";
