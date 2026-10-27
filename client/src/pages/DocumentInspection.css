@@ -1,0 +1,32 @@
+.inspection-form{max-width:850px;margin-bottom:18px}
+.inspection-form .section-heading{margin-bottom:4px}
+.inspection-form input[type=file]{padding:8px;background:#0b1220;border:1px dashed #40516d}
+.inspection-privacy-note,.selected-file{margin:0;font-size:12px}
+.selected-file{color:#d4deed;overflow-wrap:anywhere}
+.inspection-results{display:grid;gap:14px}
+.inspection-result-card,.inspection-findings{padding:20px}
+.inspection-result-card>p{margin:0 0 15px}
+.inspection-meta{display:flex;flex-wrap:wrap;gap:8px 18px;color:#aebbd0;font-size:11px}
+.report-status{border-radius:99px;padding:6px 10px;font-size:10px;font-weight:700;letter-spacing:.3px;white-space:nowrap}
+.report-complete{background:#123322;color:#4ade80}
+.report-partial{background:#342a17;color:#f5c15d}
+.report-deterministic_only{background:#172033;color:#c1cada}
+.coverage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:16px}
+.coverage-grid>div{display:grid;gap:5px;padding:10px;background:#0b1220;border:1px solid #263247;border-radius:6px}
+.coverage-grid span{color:#94a3b8;font-size:10px}
+.coverage-grid strong{color:#e2e9f4;font-size:11px}
+.document-finding-list{display:grid;gap:9px}
+.document-finding{padding:13px;border:1px solid #263247;border-radius:7px;background:#0d1524}
+.document-finding-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.document-finding-heading h3{margin:6px 0 0;font-size:13px}
+.document-finding p{margin:10px 0 0;color:#c1cada;font-size:12px}
+.document-references{display:flex;flex-wrap:wrap;gap:6px 10px;margin-top:10px;color:#94a3b8;font-size:11px}
+.document-references strong{color:#c1cada}
+.document-references span{overflow-wrap:anywhere}
+.risk-critical{background:#351d23;color:#ff8585}
+.risk-high{background:#342a17;color:#f5c15d}
+.risk-medium{background:#172033;color:#9dbbfa}
+.risk-low{background:#123322;color:#4ade80}
+.legacy-report-note,.coverage-warning{margin:13px 0 0;font-size:12px}
+.coverage-warning{color:#f5c15d}
+@media(max-width:520px){.inspection-result-card,.inspection-findings{padding:15px}.document-finding-heading{flex-direction:column}.report-status{margin-top:8px}}

@@ -47,8 +47,11 @@ export type AuditEvent = {
 export type Approval = {
   approvalId: string;
   eventId: string;
+  agentId: string;
   tool: string;
   resource: string;
+  inspectionId?: string;
+  destination?: "local" | "external";
   status: ApprovalStatus;
   createdAt: string;
   decidedAt?: string;
@@ -148,4 +151,7 @@ export type InspectionResponse = {
     };
   };
 };
+export type DocumentInspectionResponse = InspectionResponse;
+export type InspectionFinding = InspectionResponse["findings"][number];
+export type DocumentReportFinding = InspectionResponse["report"]["findings"][number];
 export type ApiError = { error: string; message: string; details?: unknown[] };

@@ -1,0 +1,92 @@
+.report-policy-result {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: #fbfaf5;
+}
+.approval-tabs {
+  border-bottom-color: var(--border);
+}
+.approval-tabs button {
+  color: #6d7369;
+}
+.approval-tabs button.active {
+  border-bottom-color: #789c35;
+  color: #30372b;
+}
+.approval-tabs button span {
+  border-radius: 3px;
+  background: #eeede5;
+  color: #5f6659;
+}
+.approval-row {
+  border-bottom-color: #e3e3da;
+}
+.approval-context {
+  border-left-color: #c4d29e;
+}
+.approval-context p,
+.approval-context > div,
+.approval-time > span {
+  color: #646a60;
+}
+.system-health-banner {
+  border-color: #cdd9c0;
+  background: #edf2e7;
+}
+.system-health-banner strong {
+  color: #35432b;
+}
+.system-health-banner small {
+  color: #626c59;
+}
+.status-detail {
+  padding: 18px;
+}
+.status-detail > strong {
+  color: #292e27;
+  font-family: var(--mono);
+  font-size: 17px;
+}
+.status-detail p {
+  color: #70756c;
+}
+.system-error {
+  border-color: #e7c7c2;
+  background: #fbefec;
+  color: #a8423a;
+}
+.empty-state {
+  color: #4b5148;
+}
+.empty-state > span:last-child {
+  color: #767b71;
+}
+.empty-icon {
+  color: #6d8746;
+}
+.spinner {
+  border-color: #d7ddc9;
+  border-top-color: #739c4c;
+}
+.refresh-button {
+  color: #59604f;
+}
+.records-count {
+  border-radius: 3px;
+  background: #ecece4;
+  color: #5e6459;
+}
+.policy-reference {
+  border-color: var(--border);
+  border-radius: 4px;
+  background: #fbfaf5;
+}
+.policy-reference > summary {
+  color: #30362d;
+}
+.policy-reference p {
+  color: #676d63;
+}
+.reason-toggle span {
+  color: #657f3f;
+}

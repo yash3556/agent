@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowRight, Check, CircleAlert, Clipboard, ClipboardCheck, Download, FileClock, FileSearch, LayoutDashboard, Printer, RefreshCw, Search, Server, Shield, Upload, Workflow, X } from "lucide-react";
 import { api, errorCode, errorMessage } from "./lib/api";
 import type { Advisory, Approval, AuditEvent, Decision, EvaluateRequest, EvaluateResponse, Health, InspectionResponse, Scenario } from "./types";
 import { StatusBadge } from "./components/StatusBadge";
+import { ServiceHealthStrip } from "./components/ServiceHealthStrip";
+import { PrimaryNavigation } from "./components/PrimaryNavigation";
 
 type Page = "simulator" | "dashboard" | "approvals" | "audit" | "documents" | "system";
 const nav: { id: Page; label: string; glyph: ReactNode }[] = [
@@ -14,6 +16,19 @@ const nav: { id: Page; label: string; glyph: ReactNode }[] = [
   { id: "system", label: "API / System Status", glyph: <Server size={18}/> },
 ];
 const emptyRequest: EvaluateRequest = { agentId: "demo-agent", tool: "read_file", resource: "public/welcome.txt" };
+const policyRules: { id: string; condition: string; decision: Decision }[] = [
+  { id: "R-001", condition: "Traversal, absolute paths, NUL, or malformed resource encoding.", decision: "BLOCK" },
+  { id: "R-005", condition: "Document action has no valid, complete inspection owned by this agent.", decision: "BLOCK" },
+  { id: "R-006", condition: "demo-agent analyzes its completed inspection locally.", decision: "ALLOW" },
+  { id: "R-007", condition: "External export contains a credential-like finding.", decision: "BLOCK" },
+  { id: "R-008", condition: "External export contains a suspicious-instruction finding.", decision: "BLOCK" },
+  { id: "R-010", condition: "External export report has truncated findings.", decision: "BLOCK" },
+  { id: "R-009", condition: "External export contains personal-data findings and no higher-priority block applies.", decision: "REQUIRE_APPROVAL" },
+  { id: "R-002", condition: "read_file targets the exact public/welcome.txt resource.", decision: "ALLOW" },
+  { id: "R-003", condition: "read_file targets a private/ resource.", decision: "BLOCK" },
+  { id: "R-004", condition: "export_report targets sensitive-report.", decision: "REQUIRE_APPROVAL" },
+  { id: "R-999", condition: "No earlier rule permits the requested tool and resource (deny by default).", decision: "BLOCK" },
+];
 
 function pageFromPath(): Page {
   const match = location.pathname.replace(/^\//, "") as Page;
@@ -56,6 +71,20 @@ function ApiStatus({ health, error }: { health: Health | null; error: boolean })
     {health && !error && <span className="api-detail">DB {health.db} · AI {health.ai}</span>}
   </div>;
 }
+function MatchedRule({ ruleId }: { ruleId: string }) {
+  const rule = policyRules.find((item) => item.id === ruleId);
+  return rule ? <div className="matched-rule"><span className="eyebrow">MATCHED RULE · {rule.id}</span><span>{rule.condition}</span></div> : null;
+}
+function PolicyRuleReference() {
+  return <details className="policy-reference">
+    <summary><span><span className="eyebrow">POLICY REFERENCE</span><strong>Current backend rules</strong></span><span className="count-note">{policyRules.length} rules · read only</span></summary>
+    <p>Rules are evaluated by the backend in order. This reference describes the current implementation; it cannot edit or override a decision.</p>
+    <div className="policy-rule-table"><table>
+      <thead><tr><th>Order</th><th>Condition</th><th>Decision</th></tr></thead>
+      <tbody>{policyRules.map((rule, index) => <tr key={rule.id}><td><code>{String(index + 1).padStart(2, "0")} · {rule.id}</code></td><td>{rule.condition}</td><td><StatusBadge status={rule.decision}/></td></tr>)}</tbody>
+    </table></div>
+  </details>;
+}
 function AdvisoryCard({ advisory }: { advisory: Advisory | null }) {
   return <section className="card advisory-card">
     <div className="section-heading"><div><span className="eyebrow">OPTIONAL ANALYSIS</span><h3>Advisory</h3></div><span className="advisory-label">Advisory only</span></div>
@@ -71,6 +100,7 @@ function DecisionResult({ result, onApprovals }: { result: EvaluateResponse; onA
     <section className={`card result-card decision-${result.decision.toLowerCase()}`}>
       <div className="result-top"><div><span className="eyebrow">POLICY DECISION</span><h2><StatusBadge status={result.decision} /></h2></div><span className="result-time">{dateTime(result.timestamp)}</span></div>
       <p className="result-reason">{result.reason}</p>
+      <MatchedRule ruleId={result.ruleId}/>
       <div className="result-meta"><div><span>Rule</span><code>{result.ruleId}</code></div><div><span>Event ID</span><code>{result.eventId}</code></div><div><span>Execution</span><strong className={result.executed ? "executed-yes" : "executed-no"}>{result.executed ? <Check size={13}/> : <X size={13}/>} Executed: {result.executed ? "yes" : "no"}</strong></div></div>
       {result.decision === "REQUIRE_APPROVAL" && <button className="text-link" onClick={onApprovals}>Review this request in Approvals <ArrowRight size={14}/></button>}
     </section>
@@ -82,10 +112,35 @@ function DecisionResult({ result, onApprovals }: { result: EvaluateResponse; onA
 }
 function EventTable({ events, compact = false }: { events: AuditEvent[]; compact?: boolean }) {
   const [expanded, setExpanded] = useState<string | null>(null);
-  if (!events.length) return <EmptyState title="No actions evaluated yet. Run a scenario in the Action Simulator." />;
+  if (!events.length) return <EmptyState title="No recent audit events." detail="Evaluate an action or inspect a document to create activity." />;
   return <div className="table-wrap"><table><thead><tr><th>Time</th><th>Event ID</th><th>Action</th><th>Decision</th><th>Reason</th><th>Rule</th><th>Executed</th><th>Advisory</th></tr></thead>
     <tbody>{events.slice(0, compact ? 8 : 200).map((event) => <FragmentRow key={event.eventId} event={event} expanded={expanded === event.eventId} toggle={() => setExpanded(expanded === event.eventId ? null : event.eventId)} />)}</tbody>
   </table></div>;
+}
+
+function AnimatedMetric({ value }: { value: number | string }) {
+  const [displayed, setDisplayed] = useState<number | string>(value);
+  const previous = useRef<number | string>(value);
+  useEffect(() => {
+    const from = previous.current;
+    previous.current = value;
+    if (typeof value !== "number" || typeof from !== "number" || value === from
+      || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setDisplayed(value);
+      return;
+    }
+    const start = performance.now();
+    let frame = 0;
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - start) / 360);
+      const eased = 1 - (1 - progress) ** 3;
+      setDisplayed(Math.round(from + (value - from) * eased));
+      if (progress < 1) frame = window.requestAnimationFrame(tick);
+    };
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+  }, [value]);
+  return <>{displayed}</>;
 }
 function FragmentRow({ event, expanded, toggle }: { event: AuditEvent; expanded: boolean; toggle: () => void }) {
   const status: Decision | "APPROVED" | "REJECTED" | "INSPECTED" = event.type === "APPROVAL_DECISION" ? event.approvalStatus ?? "REJECTED" : event.decision;
@@ -108,18 +163,21 @@ export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [healthError, setHealthError] = useState(false);
   const [events, setEvents] = useState<AuditEvent[]>([]);
+  const [eventsLoaded, setEventsLoaded] = useState(false);
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
-  const [pendingCount, setPendingCount] = useState(0);
+  const [scenariosError, setScenariosError] = useState("");
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [globalError, setGlobalError] = useState("");
 
   const refreshEvents = useCallback(async () => { const data = await api.events(); setEvents(data.events); }, []);
   const refreshApprovals = useCallback(async () => { const data = await api.approvals("pending"); setPendingCount(data.approvals.length); }, []);
   const refreshData = useCallback(async () => {
     const results = await Promise.allSettled([refreshEvents(), refreshApprovals()]);
-    if (results[0].status === "rejected") setEvents([]);
-    if (results[1].status === "rejected") setPendingCount(0);
-    if (results.some((result) => result.status === "rejected")) setGlobalError("Could not refresh the audit log or approvals. Latest data may be unavailable.");
-    else setGlobalError("");
+    if (results[0].status === "fulfilled") setEventsLoaded(true);
+    const failures = results.flatMap((result, index) => result.status === "rejected"
+      ? [`${index === 0 ? "Audit history" : "Approvals"}: ${errorMessage(result.reason)}`]
+      : []);
+    setGlobalError(failures.length ? `Refresh incomplete. ${failures.join(" ")}` : "");
   }, [refreshApprovals, refreshEvents]);
   const refreshHealth = useCallback(async () => {
     try { const status = await api.health(); setHealth(status); setHealthError(false); }
@@ -129,7 +187,7 @@ export default function App() {
 
   useEffect(() => {
     void refreshHealth();
-    void api.scenarios().then(({ scenarios: items }) => setScenarios(items)).catch(() => setScenarios([]));
+    void api.scenarios().then(({ scenarios: items }) => { setScenarios(items); setScenariosError(""); }).catch((failure) => setScenariosError(errorMessage(failure)));
     void refreshData();
     const timer = window.setInterval(() => { void refreshHealth(); }, 15000);
     const pop = () => setPage(pageFromPath());
@@ -142,18 +200,18 @@ export default function App() {
 
   return <div className="app-shell">
     <aside className="sidebar">
-      <a className="brand" href="/" onClick={(event) => { event.preventDefault(); navigate("simulator"); }}><img src="/logo.svg" alt=""/><span>AgentShield<small>SECURITY CONSOLE</small></span></a>
+      <a className="brand" href="/" onClick={(event) => { event.preventDefault(); navigate("dashboard"); }}><img src="/logo.svg" alt=""/><span>AgentShield<small>AI SECURITY FIREWALL</small></span></a>
       <div className="nav-caption">WORKSPACE</div>
-      <nav aria-label="Main navigation">{nav.map((item) => <button key={item.id} title={item.label} className={`nav-item ${page === item.id ? "active" : ""}`} onClick={() => navigate(item.id)} aria-current={page === item.id ? "page" : undefined}><Icon>{item.glyph}</Icon><span>{item.label}</span>{item.id === "approvals" && pendingCount > 0 && <span className="nav-count">{pendingCount}</span>}</button>)}</nav>
-      <div className="sidebar-footer"><span className="environment-dot"/><span>Synthetic demo environment</span><small>v1.1 · Policy controlled</small></div>
+      <PrimaryNavigation items={nav} activePage={page} pendingCount={pendingCount} onNavigate={navigate} />
+      <div className="sidebar-footer"><span className="environment-dot"/><span>Synthetic demo environment</span><small>Policy controlled · No real tools</small></div>
     </aside>
-    <div className="workspace"><header className="topbar"><div className="mobile-brand"><img src="/logo.svg" alt=""/> AgentShield</div><div className="breadcrumb"><span>Workspace</span><span aria-hidden="true">/</span><strong>{nav.find((item) => item.id === page)?.label}</strong></div><div className="topbar-right"><span className="demo-badge"><span/>LOCAL DEMO</span><ApiStatus health={health} error={healthError} /><button className="refresh-button" onClick={() => void refreshAll()} aria-label="Refresh backend status and activity" title="Refresh status and activity"><RefreshCw size={15}/><span>Refresh</span></button></div></header>
-      <main className="main-content">
-        {globalError && page !== "simulator" && <ErrorBanner>{globalError}</ErrorBanner>}
-        {page === "simulator" && <Simulator scenarios={scenarios} backendReady={Boolean(health && !healthError)} globalError={globalError} onEvaluated={onEvaluated} onApprovals={() => navigate("approvals")} />}
-        {page === "dashboard" && <Dashboard events={events} pendingCount={pendingCount} health={health} healthError={healthError} error={globalError} onNavigate={navigate} onRefresh={() => void refreshAll()} />}
+    <div className="workspace"><header className="topbar"><div className="mobile-brand"><img src="/logo.svg" alt=""/> AgentShield</div><div className="breadcrumb"><span>WORKSPACE</span><span aria-hidden="true">/</span><strong>{nav.find((item) => item.id === page)?.label}</strong></div><div className="topbar-right"><span className="demo-badge"><span/>DEMO · SYNTHETIC</span><ApiStatus health={health} error={healthError} /><button className="refresh-button" onClick={() => void refreshAll()} aria-label="Refresh backend status and activity" title="Refresh status and activity"><RefreshCw size={15}/><span>Refresh</span></button></div></header>
+      <main key={page} className="main-content">
+        {globalError && !["simulator", "dashboard", "approvals", "audit"].includes(page) && <ErrorBanner>{globalError}</ErrorBanner>}
+        {page === "simulator" && <Simulator scenarios={scenarios} scenariosError={scenariosError} backendReady={Boolean(health && !healthError)} globalError={globalError} onEvaluated={onEvaluated} onApprovals={() => navigate("approvals")} />}
+        {page === "dashboard" && <Dashboard events={events} eventsLoaded={eventsLoaded} pendingCount={pendingCount} health={health} healthError={healthError} error={globalError} onNavigate={navigate} onRefresh={() => void refreshAll()} />}
         {page === "approvals" && <Approvals onChanged={async () => { await refreshData(); }} />}
-        {page === "audit" && <Audit events={events} error={globalError} />}
+        {page === "audit" && <Audit events={events} eventsLoaded={eventsLoaded} error={globalError} />}
         {page === "documents" && <DocumentInspection onApprovals={() => navigate("approvals")} onActionEvaluated={refreshData} />}
         {page === "system" && <SystemStatus health={health} error={healthError} onRefresh={() => void refreshAll()} />}
       </main>
@@ -161,7 +219,7 @@ export default function App() {
   </div>;
 }
 
-function Simulator({ scenarios, backendReady, globalError, onEvaluated, onApprovals }: { scenarios: Scenario[]; backendReady: boolean; globalError: string; onEvaluated: () => Promise<void>; onApprovals: () => void }) {
+function Simulator({ scenarios, scenariosError, backendReady, globalError, onEvaluated, onApprovals }: { scenarios: Scenario[]; scenariosError: string; backendReady: boolean; globalError: string; onEvaluated: () => Promise<void>; onApprovals: () => void }) {
   const [form, setForm] = useState<EvaluateRequest>(emptyRequest);
   const [selected, setSelected] = useState("");
   const [result, setResult] = useState<EvaluateResponse | null>(null);
@@ -181,6 +239,7 @@ function Simulator({ scenarios, backendReady, globalError, onEvaluated, onApprov
     <div className="page-intro"><div><span className="eyebrow">POLICY PLAYGROUND</span><h1>Policy Evaluation</h1><p>Evaluate a proposed action against the backend security policy.</p></div><div className="intro-mark" aria-hidden="true"><Shield size={22}/></div></div>
     {!backendReady && <ErrorBanner>Could not reach the backend. Check that the server is running. The simulator is disabled until it reconnects.</ErrorBanner>}
     {globalError && <ErrorBanner>{globalError}</ErrorBanner>}
+    {scenariosError && <ErrorBanner>Could not load demo scenarios. {scenariosError}</ErrorBanner>}
     {error && <ErrorBanner>{error}{errorCodeValue === "AUDIT_UNAVAILABLE" ? " The action was not executed. Try again later." : ""}</ErrorBanner>}
     <div className="simulator-grid">
       <div className="left-column">
@@ -197,22 +256,43 @@ function Simulator({ scenarios, backendReady, globalError, onEvaluated, onApprov
       </div>
       <div className="right-column">{busy ? <div className="card result-placeholder"><span className="spinner"/><span className="eyebrow">POLICY ENGINE</span><h2>Evaluating request…</h2><p className="muted">Waiting for the backend decision.</p></div> : result ? <DecisionResult result={result} onApprovals={onApprovals} /> : <div className="card result-placeholder"><span className="placeholder-shield" aria-hidden="true">◇</span><span className="eyebrow">YOUR RESULT</span><h2>Ready when you are</h2><p>Choose a scenario or enter an action, then evaluate it to see the policy decision.</p><div className="placeholder-rule"><span className="health-dot"/>Decisions come directly from the backend</div></div>}</div>
     </div>
+    <PolicyRuleReference/>
   </>;
 }
 
-function Dashboard({ events, pendingCount, health, healthError, error, onNavigate, onRefresh }: { events: AuditEvent[]; pendingCount: number; health: Health | null; healthError: boolean; error: string; onNavigate: (page: Page) => void; onRefresh: () => void }) {
+function Dashboard({ events, eventsLoaded, pendingCount, health, healthError, error, onNavigate, onRefresh }: { events: AuditEvent[]; eventsLoaded: boolean; pendingCount: number | null; health: Health | null; healthError: boolean; error: string; onNavigate: (page: Page) => void; onRefresh: () => void }) {
+  const evaluations = events.filter((event) => event.type === "EVALUATION");
+  const inspections = events.filter((event) => event.type === "DOCUMENT_INSPECTION");
+  const findingCount = inspections.reduce((total, event) => total + (event.findingCount ?? 0), 0);
+  const decisionCounts = [
+    { label: "Allowed", value: evaluations.filter((event) => event.decision === "ALLOW").length, tone: "allow" },
+    { label: "Blocked", value: evaluations.filter((event) => event.decision === "BLOCK").length, tone: "block" },
+    { label: "Needs approval", value: evaluations.filter((event) => event.decision === "REQUIRE_APPROVAL").length, tone: "review" },
+  ];
+  const decisionTotal = evaluations.length;
   const stats = [
-    { label: "Backend", value: health && !healthError ? "Healthy" : "Unavailable", mark: <Server size={17}/>, tone: health && !healthError ? "green" : "red" },
-    { label: "Database", value: health && !healthError ? health.db : "Unknown", mark: "DB", tone: health?.db === "connected" && !healthError ? "green" : "amber" },
-    { label: "AI provider", value: health && !healthError ? health.ai : "Unknown", mark: "AI", tone: health?.ai === "configured" && !healthError ? "navy" : "amber" },
-    { label: "Recent events · 50 max", value: events.length, mark: <FileClock size={17}/>, tone: "navy" },
+    { label: "Policy evaluations", value: eventsLoaded ? evaluations.length : "—", mark: <Workflow size={17}/>, tone: "navy", note: eventsLoaded ? "in latest 50 events" : "history unavailable" },
+    { label: "Allowed", value: eventsLoaded ? decisionCounts[0].value : "—", mark: <Check size={17}/>, tone: "green", note: "backend decisions" },
+    { label: "Blocked", value: eventsLoaded ? decisionCounts[1].value : "—", mark: <Shield size={17}/>, tone: "red", note: "backend decisions" },
+    { label: "Pending approvals", value: pendingCount ?? "—", mark: <ClipboardCheck size={17}/>, tone: "amber", note: pendingCount === null ? "queue unavailable" : "current queue" },
+    { label: "Inspection findings", value: eventsLoaded ? findingCount : "—", mark: <FileSearch size={17}/>, tone: "navy", note: eventsLoaded ? `across ${inspections.length} recent inspections` : "history unavailable" },
   ];
   return <>
-    <div className="page-intro"><div><span className="eyebrow">SECURITY OPERATIONS</span><h1>Overview</h1><p>Backend health and recent policy activity.</p></div><button className="outline-button refresh-inline" onClick={onRefresh}><RefreshCw size={14}/> Refresh data</button></div>
+    <div className="page-intro"><div><span className="eyebrow">SECURITY OPERATIONS / SUMMARY</span><h1>Overview</h1><p>Backend health and the latest available policy activity.</p></div><button className="outline-button refresh-inline" onClick={onRefresh}><RefreshCw size={14}/> Refresh data</button></div>
     {error && <ErrorBanner>{error}</ErrorBanner>}
-    <div className="stats-grid">{stats.map((stat) => <section className="card stat-card" key={stat.label}><div className={`stat-icon ${stat.tone}`} aria-hidden="true">{stat.mark}</div><div><span>{stat.label}</span><strong className="status-value">{stat.value}</strong></div></section>)}</div>
-    <div className="quick-actions"><button className="quick-action" onClick={() => onNavigate("documents")}><FileSearch size={17}/><span><strong>Inspect a document</strong><small>Upload PDF, DOCX, or TXT</small></span><ArrowRight size={15}/></button><button className="quick-action" onClick={() => onNavigate("simulator")}><Workflow size={17}/><span><strong>Evaluate an action</strong><small>Run a policy decision</small></span><ArrowRight size={15}/></button><button className="quick-action" onClick={() => onNavigate("approvals")}><ClipboardCheck size={17}/><span><strong>Review approvals</strong><small>{pendingCount} pending</small></span><ArrowRight size={15}/></button></div>
-    <section className="card table-card"><div className="section-heading table-heading"><div><span className="eyebrow">LATEST ACTIVITY</span><h2>Recent audit events</h2></div><span className="muted">{events.length} event{events.length === 1 ? "" : "s"}</span></div><EventTable events={events} compact /></section>
+    <div className="stats-grid">{stats.map((stat) => <section className="card stat-card" key={stat.label}><div className={`stat-icon ${stat.tone}`} aria-hidden="true">{stat.mark}</div><div><span>{stat.label}</span><strong className="status-value"><AnimatedMetric value={stat.value}/></strong><small>{stat.note}</small></div></section>)}</div>
+    <ServiceHealthStrip health={health} hasError={healthError} />
+    <section className="card decision-summary">
+      <div className="section-heading"><div><span className="eyebrow">POLICY OUTCOMES</span><h2>Recent decisions</h2></div><span className="count-note">{eventsLoaded ? `${decisionTotal} evaluations · latest 50 audit events` : "Awaiting audit history"}</span></div>
+      {!eventsLoaded ? <p className="muted">Policy decisions are unavailable until the audit history loads.</p> : decisionTotal === 0 ? <p className="muted">No policy evaluations in the currently available event history.</p> : <div className="decision-breakdown">
+        {decisionCounts.map((decision) => <div className="decision-row" key={decision.label}>
+          <div><span className={`decision-key ${decision.tone}`} aria-hidden="true"/><strong>{decision.label}</strong><span className="decision-count">{decision.value}</span></div>
+          <div className="decision-track" role="img" aria-label={`${decision.label}: ${decision.value} of ${decisionTotal} recent evaluations`}><span className={decision.tone} style={{ width: `${decision.value / decisionTotal * 100}%` }}/></div>
+        </div>)}
+      </div>}
+    </section>
+    <div className="quick-actions"><button className="quick-action" onClick={() => onNavigate("documents")}><FileSearch size={17}/><span><strong>Inspect a document</strong><small>PDF, DOCX, TXT, CSV, JSON, Markdown, XLSX</small></span><ArrowRight size={15}/></button><button className="quick-action" onClick={() => onNavigate("simulator")}><Workflow size={17}/><span><strong>Evaluate an action</strong><small>Run a policy decision</small></span><ArrowRight size={15}/></button><button className="quick-action" onClick={() => onNavigate("approvals")}><ClipboardCheck size={17}/><span><strong>Review approvals</strong><small>{pendingCount === null ? "Queue unavailable" : `${pendingCount} pending`}</small></span><ArrowRight size={15}/></button></div>
+    <section className="card table-card"><div className="section-heading table-heading"><div><span className="eyebrow">LATEST ACTIVITY</span><h2>Recent audit events</h2></div><span className="muted">{eventsLoaded ? `${events.length} events · up to 50` : "History unavailable"}</span></div><p className="activity-freshness">History refreshes on request and after actions; this view is not a live event stream.</p>{eventsLoaded ? <EventTable events={events} compact /> : <EmptyState title="Audit history unavailable." detail="Refresh after confirming the backend is reachable." />}</section>
   </>;
 }
 
@@ -221,6 +301,7 @@ function DocumentInspection({ onApprovals, onActionEvaluated }: { onApprovals: (
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<InspectionResponse | null>(null);
   const [error, setError] = useState("");
+  const [uploadErrorCode, setUploadErrorCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [policyResult, setPolicyResult] = useState<EvaluateResponse | null>(null);
   const [policyError, setPolicyError] = useState("");
@@ -229,14 +310,17 @@ function DocumentInspection({ onApprovals, onActionEvaluated }: { onApprovals: (
   const inspect = async (event: FormEvent) => {
     event.preventDefault();
     if (!file) {
-      setError("Choose a PDF, DOCX, or TXT file to inspect.");
+      setError("Choose a supported PDF, DOCX, TXT, CSV, JSON, Markdown, or XLSX file to inspect.");
+      setUploadErrorCode("");
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
       setError("The file exceeds the 5 MiB upload limit.");
+      setUploadErrorCode("PAYLOAD_TOO_LARGE");
       return;
     }
     setError("");
+    setUploadErrorCode("");
     setResult(null);
     setPolicyResult(null);
     setPolicyError("");
@@ -247,6 +331,7 @@ function DocumentInspection({ onApprovals, onActionEvaluated }: { onApprovals: (
       await onActionEvaluated();
     } catch (failure) {
       setError(errorMessage(failure));
+      setUploadErrorCode(errorCode(failure) ?? "");
     } finally {
       setBusy(false);
     }
@@ -330,18 +415,19 @@ function DocumentInspection({ onApprovals, onActionEvaluated }: { onApprovals: (
 
   return <>
     <div className="page-intro"><div><span className="eyebrow">DOCUMENT SECURITY</span><h1>Document inspection</h1><p>Upload a document for bounded extraction and security scanning.</p></div></div>
-    <form className="card document-upload" onSubmit={(event) => void inspect(event)}>
+    <form className="card document-upload" aria-busy={busy} onSubmit={(event) => void inspect(event)}>
       <div className="section-heading"><div><span className="eyebrow">UPLOAD FOR ANALYSIS</span><h2>Choose a document</h2></div><span className="untrusted-chip">Untrusted file</span></div>
       <label className="document-agent">Agent ID<input value={agentId} maxLength={64} required onChange={(event) => setAgentId(event.target.value)} /></label>
       <label className="document-file">
         <Upload size={20}/>
         <strong>{file ? file.name : "Choose a file to inspect"}</strong>
         <span>{file ? `${(file.size / 1024 / 1024).toFixed(2)} MiB` : "PDF, DOCX, TXT, CSV, JSON, Markdown, or XLSX · maximum 5 MiB"}</span>
-        <input type="file" accept=".pdf,.docx,.txt,.csv,.json,.md,.markdown,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv,application/csv,application/json,text/json,text/markdown,text/x-markdown,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => { setFile(event.target.files?.[0] ?? null); setResult(null); setError(""); }} />
+        <input type="file" accept=".pdf,.docx,.txt,.csv,.json,.md,.markdown,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv,application/csv,application/json,text/json,text/markdown,text/x-markdown,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => { setFile(event.target.files?.[0] ?? null); setResult(null); setError(""); setUploadErrorCode(""); }} />
       </label>
       <p className="document-privacy">The raw upload is not stored. The backend stores the document hash, bounded metadata, and redacted findings for up to 24 hours. If AI analysis is enabled, redacted extracted text may be sent to the configured provider. Scanning is not a guarantee that a document is safe.</p>
-      {error && <ErrorBanner>{error}</ErrorBanner>}
+      {error && <ErrorBanner>{error}{uploadErrorCode && <> <code>({uploadErrorCode})</code></>}</ErrorBanner>}
       <button className="primary-button" type="submit" disabled={busy || !file}><Upload size={15}/>{busy ? "Inspecting…" : "Upload and inspect"}</button>
+      {busy && <p className="inspection-progress" role="status" aria-live="polite">Inspection is running on the backend. A percentage estimate is not available.</p>}
     </form>
     {result && <section className="card inspection-result">
       <div className="section-heading"><div><span className="eyebrow">DOCUMENT SECURITY REPORT</span><h2>{result.document.originalName}</h2></div><div className="report-actions"><span className={`risk-pill risk-${result.report.riskLevel.toLowerCase()}`}>{result.report.riskLevel} risk</span><button className="outline-button" type="button" onClick={downloadReport}><Download size={14}/> JSON report</button><button className="outline-button" type="button" onClick={() => window.print()}><Printer size={14}/> Print / PDF</button></div></div>
@@ -383,7 +469,7 @@ function DocumentInspection({ onApprovals, onActionEvaluated }: { onApprovals: (
       {result.report.findings.length === 0 ? <EmptyState title="No findings reported." detail="A clean scan is not proof that the document is safe." /> : <div className="inspection-findings">{timelineFindings.map((finding) => <article className="inspection-finding" key={finding.id}>
         <div><span className={`risk-pill risk-${finding.severity.toLowerCase()}`}>{finding.severity}</span><strong>{finding.type.replaceAll("_", " ")}</strong><span className="finding-source">{finding.category.replaceAll("_", " ")} · {finding.source}</span></div>
         <p>{finding.explanation}</p><p className="muted">{finding.recommendation}</p>
-        <details open><summary>Evidence &amp; Locations</summary><p><code>{finding.evidence}</code></p><small>Confidence {(finding.confidence * 100).toFixed(0)}%{finding.ruleId ? ` · Rule ${finding.ruleId}` : ""}</small></details>
+        <details><summary>Evidence &amp; Locations</summary><p><code>{finding.evidence}</code></p><small>Confidence {(finding.confidence * 100).toFixed(0)}%{finding.ruleId ? ` · Rule ${finding.ruleId}` : ""}</small></details>
         {finding.evidenceReferences.length > 0 && <small>Threat timeline: {finding.evidenceReferences.map((reference) => [reference.page !== null ? `page ${reference.page}` : null, reference.line ? `line ${reference.line}` : null, reference.chunk !== null ? `chunk ${reference.chunk}` : null].filter(Boolean).join(", ")).join("; ")}</small>}
       </article>)}</div>}
       </section>
@@ -405,7 +491,7 @@ function StatusDetail({ title, value, description, healthy }: { title: string; v
   return <section className="card status-detail"><div><span className={`health-dot ${healthy ? "" : "status-dot-error"}`}/><span className="eyebrow">{title}</span></div><strong>{value}</strong><p>{description}</p></section>;
 }
 
-function Audit({ events, error }: { events: AuditEvent[]; error: string }) {
+function Audit({ events, eventsLoaded, error }: { events: AuditEvent[]; eventsLoaded: boolean; error: string }) {
   const [filter, setFilter] = useState("ALL");
   const [query, setQuery] = useState("");
   const visible = events.filter((event) => {
@@ -418,7 +504,7 @@ function Audit({ events, error }: { events: AuditEvent[]; error: string }) {
     <div className="page-intro"><div><span className="eyebrow">TRACEABILITY</span><h1>Audit Log</h1><p>Document inspections, policy evaluations, and approval outcomes, newest first.</p></div><span className="records-count">{visible.length} records</span></div>
     {error && <ErrorBanner>{error}</ErrorBanner>}
     <section className="card table-card"><div className="audit-toolbar"><div className="filter-control"><label htmlFor="decision-filter">Activity</label><select id="decision-filter" value={filter} onChange={(e) => setFilter(e.target.value)}><option value="ALL">All activity</option><option value="INSPECTED">Document inspections</option><option value="ALLOW">Allowed</option><option value="BLOCK">Blocked</option><option value="REQUIRE_APPROVAL">Requires approval</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option></select></div><label className="search-control"><Search size={15} aria-hidden="true"/><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search events" aria-label="Search audit events" /></label></div>
-      {visible.length === 0 ? <EmptyState title={events.length ? "No events match these filters." : "No events recorded yet. Upload a document or evaluate an action."} /> : <EventTable events={visible} />}
+      {visible.length === 0 ? <EmptyState title={!eventsLoaded ? "Audit history unavailable." : events.length ? "No events match these filters." : "No events recorded yet."} detail={!eventsLoaded ? "Refresh after confirming the backend is reachable." : events.length ? undefined : "Upload a document or evaluate an action to create activity."} /> : <EventTable events={visible} />}
     </section>
   </>;
 }
@@ -428,26 +514,41 @@ function Approvals({ onChanged }: { onChanged: () => Promise<void> }) {
   const [pending, setPending] = useState<Approval[]>([]);
   const [decided, setDecided] = useState<Approval[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
+  const [pendingLoaded, setPendingLoaded] = useState(false);
+  const [decidedLoaded, setDecidedLoaded] = useState(false);
   const [executionOutcomes, setExecutionOutcomes] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState("");
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const load = useCallback(async () => {
     setLoading(true);
     const [pendingResult, decidedResult, eventsResult] = await Promise.allSettled([api.approvals("pending"), api.approvals(), api.events()]);
-    setPending(pendingResult.status === "fulfilled" ? pendingResult.value.approvals : []);
-    setDecided(decidedResult.status === "fulfilled" ? decidedResult.value.approvals.filter((approval) => approval.status !== "PENDING") : []);
-    setEvents(eventsResult.status === "fulfilled" ? eventsResult.value.events : []);
-    const failure = [pendingResult, decidedResult, eventsResult].find((result) => result.status === "rejected");
-    setError(failure?.status === "rejected" ? errorMessage(failure.reason) : "");
+    if (pendingResult.status === "fulfilled") {
+      setPending(pendingResult.value.approvals);
+      setPendingLoaded(true);
+    }
+    if (decidedResult.status === "fulfilled") {
+      setDecided(decidedResult.value.approvals.filter((approval) => approval.status !== "PENDING"));
+      setDecidedLoaded(true);
+    }
+    if (eventsResult.status === "fulfilled") setEvents(eventsResult.value.events);
+    const failures = [pendingResult, decidedResult, eventsResult].flatMap((result) =>
+      result.status === "rejected" ? [errorMessage(result.reason)] : []);
+    setError(failures.join(" "));
     setLoading(false);
   }, []);
   useEffect(() => { void load(); }, [load]);
   const decide = async (approval: Approval, decision: "APPROVED" | "REJECTED") => {
-    setBusyId(approval.approvalId); setError("");
+    setBusyId(approval.approvalId); setError(""); setSuccess("");
     try {
       const outcome = await api.decide(approval.approvalId, decision, notes[approval.approvalId] ?? "");
+      setSuccess(decision === "REJECTED"
+        ? "Approval rejected. The backend reports that the operation was not executed."
+        : outcome.executed
+          ? "Approval recorded. The backend reports the synthetic action was executed."
+          : "Approval recorded. The backend reports the action was not executed.");
       setPending((current) => current.filter((item) => item.approvalId !== approval.approvalId));
       setDecided((current) => [outcome.approval, ...current.filter((item) => item.approvalId !== approval.approvalId)]);
       setExecutionOutcomes((current) => ({ ...current, [approval.approvalId]: outcome.executed }));
@@ -455,18 +556,23 @@ function Approvals({ onChanged }: { onChanged: () => Promise<void> }) {
       await onChanged(); await load();
     } catch (failure) {
       const code = errorCode(failure);
+      setSuccess("");
       setError(code === "NOT_FOUND" ? "This approval no longer exists." : code === "ALREADY_DECIDED" ? "This approval was already decided." : code === "AUDIT_UNAVAILABLE" ? "Audit log unavailable. The action was not executed. Try again later." : errorMessage(failure));
       if (code === "NOT_FOUND" || code === "ALREADY_DECIDED") await load();
     } finally { setBusyId(""); }
   };
   const list = tab === "pending" ? pending : decided;
+  const listLoaded = tab === "pending" ? pendingLoaded : decidedLoaded;
   return <>
-    <div className="page-intro"><div><span className="eyebrow">HUMAN REVIEW</span><h1>Approvals</h1><p>Review sensitive actions before the backend proceeds.</p></div><div className="reviewer-label"><span className="reviewer-avatar">DR</span><span>Demo reviewer<small>Not identity-verified</small></span></div></div>
+    <div className="page-intro"><div><span className="eyebrow">HUMAN REVIEW</span><h1>Approvals</h1><p>Review sensitive actions before the backend proceeds.</p></div><div className="approval-header-actions"><div className="reviewer-label"><span className="reviewer-avatar">DR</span><span>Demo reviewer<small>Not identity-verified</small></span></div><button className="outline-button" type="button" disabled={loading} onClick={() => void load()}><RefreshCw size={14}/> Refresh queue</button></div></div>
     {error && <ErrorBanner>{error}</ErrorBanner>}
-    <section className="card approvals-card"><div className="approval-tabs" role="tablist" aria-label="Approval state"><button role="tab" aria-selected={tab === "pending"} className={tab === "pending" ? "active" : ""} onClick={() => setTab("pending")}>Pending <span>{pending.length}</span></button><button role="tab" aria-selected={tab === "decided"} className={tab === "decided" ? "active" : ""} onClick={() => setTab("decided")}>Decided <span>{decided.length}</span></button></div>
-      {loading ? <div className="loading-line"><span className="spinner small"/> Loading approvals…</div> : !list.length ? <EmptyState title={tab === "pending" ? "No pending approvals." : "No decisions yet."} detail={tab === "pending" ? "Actions that need human review will appear here." : undefined} /> : <div className="approval-list">{list.map((approval) => {
+    {success && <div className="approval-success" role="status" aria-live="polite"><Check size={15}/>{success}</div>}
+    <section className="card approvals-card"><div className="approval-tabs" role="tablist" aria-label="Approval state"><button role="tab" aria-selected={tab === "pending"} className={tab === "pending" ? "active" : ""} onClick={() => setTab("pending")}>Pending <span>{pendingLoaded ? pending.length : "—"}</span></button><button role="tab" aria-selected={tab === "decided"} className={tab === "decided" ? "active" : ""} onClick={() => setTab("decided")}>Decided <span>{decidedLoaded ? decided.length : "—"}</span></button></div>
+      {loading ? <div className="loading-line"><span className="spinner small"/> Loading approvals…</div> : !list.length && !listLoaded ? <div className="loading-line" role="alert">Could not load this approval list. Retry after checking the backend.</div> : !list.length ? <EmptyState title={tab === "pending" ? "No pending approvals." : "No decisions yet."} detail={tab === "pending" ? "Actions that need human review will appear here." : undefined} /> : <div className="approval-list">{list.map((approval) => {
         const outcome = events.find((event) => event.type === "APPROVAL_DECISION" && event.approvalId === approval.approvalId);
-        return <article className="approval-row" key={approval.approvalId}><div className="approval-main"><div className="approval-tool"><span className="tool-mark">⌘</span><div><strong>{approval.tool}</strong><code>{approval.resource}</code></div></div><div className="approval-time"><span>Requested</span><strong>{dateTime(approval.createdAt)}</strong><code title={approval.eventId}>Event {approval.eventId}</code></div><div className="approval-time"><span>Approval ID</span><code>{approval.approvalId}</code></div><div className="approval-status">{approval.status === "PENDING" ? <StatusBadge status="PENDING"/> : <StatusBadge status={approval.status}/>}</div></div>
+        const requestEvent = events.find((event) => event.type === "EVALUATION" && event.approvalId === approval.approvalId);
+        return <article className="approval-row" key={approval.approvalId}><div className="approval-main"><div className="approval-tool"><span className="tool-mark"><Workflow size={16}/></span><div><strong>{approval.tool}</strong><code>{approval.resource}</code></div></div><div className="approval-time"><span>Requested</span><strong>{dateTime(approval.createdAt)}</strong><code title={approval.eventId}>Event {approval.eventId}</code></div><div className="approval-time"><span>Approval ID</span><code>{approval.approvalId}</code></div><div className="approval-status">{approval.status === "PENDING" ? <StatusBadge status="PENDING"/> : <StatusBadge status={approval.status}/>}</div></div>
+          <div className="approval-context"><p>{requestEvent?.reason ?? "Original policy rationale is not present in the latest 50 audit events."}</p><div><span>Agent <code>{requestEvent?.agentId ?? approval.agentId}</code></span>{requestEvent?.advisory && <span>Advisory risk <strong className={`risk-pill risk-${requestEvent.advisory.riskLevel.toLowerCase()}`}>{requestEvent.advisory.riskLevel}</strong></span>}</div></div>
           {approval.status === "PENDING" ? <div className="approval-actions"><label className="note-field">Reviewer note <span className="field-optional">Optional</span><input maxLength={500} value={notes[approval.approvalId] ?? ""} onChange={(e) => setNotes((current) => ({ ...current, [approval.approvalId]: e.target.value }))} placeholder="Add a note for the audit trail" /></label><div className="action-buttons"><button className="primary-button" disabled={Boolean(busyId)} onClick={() => void decide(approval, "APPROVED")}>{busyId === approval.approvalId ? "Saving…" : "✓ Approve"}</button><button className="outline-button" disabled={Boolean(busyId)} onClick={() => void decide(approval, "REJECTED")}>× Reject</button></div></div> : <div className="decision-summary"><span>Reviewed by <strong>{approval.reviewer ?? "demo-reviewer"}</strong></span><span>{approval.decidedAt ? dateTime(approval.decidedAt) : ""}</span><span>Executed: <strong className={(outcome?.executed ?? executionOutcomes[approval.approvalId]) ? "executed-yes" : "executed-no"}>{(outcome?.executed ?? executionOutcomes[approval.approvalId]) ? "yes" : "no"}</strong></span>{approval.note && <span className="decision-note">“{approval.note}”</span>}</div>}
         </article>;
       })}</div>}

@@ -1,0 +1,128 @@
+.document-upload,
+.inspection-result {
+  margin-bottom: 16px;
+  background: var(--surface);
+}
+.document-upload {
+  max-width: 980px;
+}
+.document-agent {
+  max-width: 470px;
+  margin-bottom: 14px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.document-file {
+  min-height: 168px;
+  padding: 25px 18px;
+  border: 1px dashed #aeb39f;
+  border-radius: 3px;
+  background: #f4f4eb;
+  color: #667a42;
+  transition: border-color .15s ease, background-color .15s ease;
+}
+.document-file:hover,
+.document-file:focus-within {
+  border-color: #83a94c;
+  background: #eff3e5;
+}
+.document-file strong {
+  color: #30372b;
+  font-size: 13px;
+}
+.document-file span {
+  color: #70756c;
+  font-size: 10px;
+}
+.document-privacy {
+  color: #70756c;
+  font-size: 10px;
+}
+.inspection-progress {
+  color: #5e6f43;
+  font-size: 11px;
+}
+.inspection-result > p {
+  color: #4b5148;
+}
+.inspection-meta {
+  gap: 8px 16px;
+  color: #696f65;
+  font-size: 10px;
+}
+.inspection-meta code {
+  overflow-wrap: anywhere;
+}
+.report-detail-card,
+.report-summary-grid > div,
+.inspection-finding {
+  border: 1px solid #ddded4;
+  border-radius: 3px;
+  background: #f6f5ee;
+  color: #454b42;
+}
+.report-detail-card h3,
+.finding-section > h3 {
+  color: #282d26;
+}
+.report-detail-card p,
+.report-detail-card small {
+  color: #646a60;
+  font-size: 11px;
+}
+.report-detail-card strong,
+.report-summary-grid strong,
+.inspection-finding > div strong {
+  color: #2d322a;
+}
+.report-summary-grid span,
+.report-summary-grid small {
+  color: #71776c;
+}
+.report-summary-grid strong {
+  font-variant-numeric: tabular-nums;
+}
+.inspection-finding {
+  padding: 16px;
+}
+.inspection-finding > div {
+  gap: 8px;
+}
+.inspection-finding p {
+  color: #4e544a;
+}
+.inspection-finding details {
+  border-top-color: #dedfd6;
+}
+.inspection-finding details summary {
+  color: #4d6232;
+}
+.inspection-finding details code {
+  display: block;
+  padding: 9px;
+  border: 1px solid #dedfd6;
+  border-radius: 2px;
+  background: #eeede5;
+  white-space: pre-wrap;
+}
+.finding-source,
+.inspection-finding > small {
+  color: #70756c;
+}
+.threat-correlation {
+  border: 1px solid #e4d3ad;
+  border-radius: 3px;
+  background: #f8f2e4;
+  color: #65532d;
+}
+.threat-correlation p {
+  color: #665a3d;
+}
+.policy-evaluation {
+  border-color: #d8d9cf;
+  border-radius: 3px;
+  background: #eeede5;
+}
+.policy-evaluation p {
+  color: #646a60;
+}

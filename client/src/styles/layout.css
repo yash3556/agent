@@ -1,0 +1,199 @@
+.app-shell {
+  background: var(--bg);
+}
+.sidebar {
+  width: 252px;
+  padding: 24px 14px 18px;
+  background: #171a17;
+  border-right: 1px solid #343a32;
+}
+.brand {
+  padding: 0 10px 34px;
+  gap: 12px;
+  color: #f3f4ed;
+  font-size: 16px;
+  letter-spacing: -.45px;
+}
+.brand img {
+  width: 35px;
+  height: 35px;
+}
+.brand small {
+  color: #9ea69a;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 1.15px;
+}
+.nav-caption,
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .9px;
+}
+.nav-caption {
+  padding-left: 12px;
+  color: #8d9589;
+}
+.sidebar nav {
+  gap: 4px;
+}
+.nav-item {
+  min-height: 43px;
+  padding: 10px 12px;
+  border-radius: 3px;
+  color: #c5cbc1;
+  font-size: 12px;
+  font-weight: 650;
+  transition: background-color .16s ease, color .16s ease;
+}
+.nav-item:hover {
+  background: #ffffff0d;
+  color: #fff;
+}
+.nav-item.active {
+  background: #b7ff45;
+  color: #20251b;
+  box-shadow: none;
+}
+.nav-item.active .icon {
+  color: #20251b;
+}
+.nav-item .icon {
+  width: 20px;
+}
+.nav-count {
+  min-width: 20px;
+  border-radius: 3px;
+  background: #c6534b;
+  color: #fff;
+}
+.nav-item.active .nav-count {
+  background: #303c22;
+  color: #e6ffc5;
+}
+.sidebar-footer {
+  border-color: #ffffff1c;
+  color: #c2c9bd;
+}
+.sidebar-footer small {
+  color: #929b8e;
+}
+.environment-dot {
+  background: #a4d85c;
+  box-shadow: none;
+}
+.workspace {
+  margin-left: 252px;
+  background: var(--bg);
+}
+.topbar {
+  height: 62px;
+  padding: 0 34px;
+  background: #fbfaf5;
+  border-bottom-color: var(--border);
+}
+.breadcrumb {
+  gap: 10px;
+  color: #858a80;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .4px;
+}
+.breadcrumb strong {
+  color: #373c34;
+  font-family: "Manrope", "Segoe UI", sans-serif;
+  font-size: 12px;
+  letter-spacing: 0;
+}
+.demo-badge {
+  border-color: #ded8c4;
+  border-radius: 3px;
+  background: #f2f0e5;
+  color: #71663f;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .45px;
+}
+.demo-badge span {
+  background: #b88632;
+}
+.api-status {
+  gap: 8px;
+  color: #535a50;
+  font-size: 10px;
+}
+.api-status.online .health-dot,
+.health-dot {
+  background: #5b8b45;
+  box-shadow: none;
+}
+.api-status.offline .health-dot,
+.health-dot.status-dot-error {
+  background: var(--red);
+}
+.api-detail {
+  color: #7f857a;
+  border-left-color: var(--border);
+}
+.mobile-brand {
+  color: #20231f;
+  font-size: 13px;
+  font-weight: 800;
+}
+.main-content {
+  max-width: 1580px;
+  padding: 32px 38px 58px;
+  background-color: #f4f3ec;
+  background-image:
+    linear-gradient(to right, rgb(32 35 31 / 3%) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(32 35 31 / 3%) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+.page-intro {
+  margin-bottom: 24px;
+}
+.page-intro p {
+  color: var(--muted);
+  font-size: 13px;
+}
+.eyebrow {
+  color: #73796e;
+  font-weight: 600;
+}
+.intro-mark {
+  width: 46px;
+  height: 46px;
+  border: 1px solid #d5dac9;
+  border-radius: 4px;
+  background: #e9eddc;
+  color: #576d35;
+}
+.card {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  box-shadow: none;
+}
+.section-heading {
+  margin-bottom: 16px;
+}
+.section-heading h2 {
+  font-size: 16px;
+}
+.section-heading h3 {
+  font-size: 14px;
+}
+.muted,
+.count-note {
+  color: var(--muted);
+}
+.error-banner {
+  border: 1px solid #e7c7c2;
+  border-radius: 3px;
+  background: #fbefec;
+  color: #8f3932;
+}
+.error-banner .icon {
+  border-color: #cb837a;
+  color: #a9433b;
+}

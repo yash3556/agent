@@ -1,0 +1,72 @@
+:root {
+  color-scheme: light;
+  font-family: "Manrope", "Segoe UI", sans-serif;
+  color: #20231f;
+  background: #f4f3ec;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --navy: #171a17;
+  --navy-2: #252a24;
+  --teal: #789c35;
+  --bg: #f4f3ec;
+  --surface: #fbfaf5;
+  --text: #20231f;
+  --muted: #70756c;
+  --border: #d8d9cf;
+  --green: #47733d;
+  --red: #c6534b;
+  --amber: #9c712a;
+  --mono: "IBM Plex Mono", Consolas, monospace;
+}
+body {
+  min-width: 320px;
+  background: var(--bg);
+  color: var(--text);
+}
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 2px solid #7eac32;
+  outline-offset: 3px;
+}
+code,
+.mono-input,
+.scenario-id,
+.result-meta code,
+.inspection-meta code,
+.copy-id,
+.approval-time code,
+.approval-tool code {
+  font-family: var(--mono);
+}
+h1,
+h2,
+h3,
+strong {
+  color: var(--text);
+}
+h1 {
+  margin: 7px 0 8px;
+  font-size: clamp(25px, 2.4vw, 34px);
+  font-weight: 800;
+  line-height: 1.14;
+  letter-spacing: -1.1px;
+}
+h2 {
+  color: #292e27;
+  font-weight: 750;
+  letter-spacing: -.4px;
+}
+h3 {
+  color: #292e27;
+  font-weight: 700;
+}

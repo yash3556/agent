@@ -1,0 +1,79 @@
+th {
+  background: #eeede5;
+  color: #656b61;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: .35px;
+  text-transform: uppercase;
+}
+td {
+  border-bottom-color: #e7e7de;
+  color: #444a41;
+  font-size: 11px;
+}
+tbody tr:hover {
+  background: #f6f6ef;
+}
+code {
+  color: #4a5146;
+  font-size: 10px;
+}
+.muted-code {
+  color: #858a80;
+}
+.copy-id,
+.reason-toggle {
+  color: #4b5148;
+}
+.status-badge,
+.risk-pill,
+.untrusted-chip {
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .1px;
+}
+.status-badge {
+  padding: 5px 7px;
+}
+.status-badge.allow {
+  border: 1px solid #c9dbc0;
+  background: #edf4e8;
+  color: #426b38;
+}
+.status-badge.block {
+  border: 1px solid #e7c6c1;
+  background: #f9ece9;
+  color: #a8423a;
+}
+.status-badge.review {
+  border: 1px solid #e5d6b8;
+  background: #f6f0e3;
+  color: #846224;
+}
+.status-badge.inspection {
+  border: 1px solid #d3d8c8;
+  background: #eef0e8;
+  color: #59604f;
+}
+.risk-pill {
+  padding: 5px 7px;
+}
+.risk-critical,
+.risk-high {
+  background: #f8e9e6;
+  color: #a7423b;
+}
+.risk-medium {
+  background: #f6f0e3;
+  color: #846224;
+}
+.risk-low {
+  background: #edf3e8;
+  color: #47733d;
+}
+.risk-unknown {
+  background: #ecece5;
+  color: #676d62;
+}

@@ -1,0 +1,171 @@
+@media (max-width: 1200px) {
+  .sidebar {
+    width: 224px;
+  }
+
+  .workspace {
+    margin-left: 224px;
+  }
+
+  .main-content {
+    padding-right: 26px;
+    padding-left: 26px;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 780px) {
+  .sidebar {
+    width: 64px;
+    padding: 17px 8px;
+    background: #171a17;
+  }
+
+  .workspace {
+    margin-left: 64px;
+  }
+
+  .nav-item {
+    border-radius: 3px;
+  }
+
+  .topbar {
+    padding: 0 18px;
+  }
+
+  .api-status {
+    gap: 0;
+    font-size: 0;
+  }
+
+  .api-detail {
+    display: none;
+  }
+
+  .main-content {
+    padding: 23px 18px 42px;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .simulator-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .right-column {
+    grid-row: 1;
+  }
+
+  .health-signals {
+    grid-template-columns: 1fr;
+  }
+
+  .quick-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .system-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 520px) {
+  .topbar {
+    height: 56px;
+    padding: 0 10px;
+  }
+
+  .breadcrumb {
+    font-size: 9px;
+  }
+
+  .breadcrumb strong {
+    font-size: 10px;
+  }
+
+  .topbar-right {
+    gap: 7px;
+  }
+
+  .demo-badge {
+    padding: 5px;
+    font-size: 8px;
+  }
+
+  .main-content {
+    padding: 19px 12px 34px;
+  }
+
+  .page-intro {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .page-intro > div:first-child {
+    min-width: 0;
+  }
+
+  .page-intro p {
+    font-size: 11px;
+  }
+
+  .page-intro .refresh-inline {
+    flex: none;
+    padding: 7px;
+    font-size: 10px;
+  }
+
+  .stats-grid {
+    gap: 8px;
+  }
+
+  .stat-card {
+    min-height: 82px;
+    padding: 11px 9px;
+    gap: 8px;
+  }
+
+  .stat-card strong {
+    font-size: 19px;
+  }
+
+  .stat-card span,
+  .stat-card small {
+    font-size: 9px;
+  }
+
+  .health-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .document-upload,
+  .inspection-result,
+  .decision-summary,
+  .scenario-section,
+  .request-form,
+  .result-card {
+    padding: 15px;
+  }
+
+  .report-actions {
+    width: 100%;
+  }
+
+  .report-actions button {
+    min-width: 0;
+  }
+
+  .inspection-finding {
+    padding: 12px;
+  }
+
+  .approval-main {
+    grid-template-columns: 1fr auto;
+  }
+}

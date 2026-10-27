@@ -1,0 +1,117 @@
+.main-content .result-stack > .result-card {
+  color: #30362d;
+  background: #fbfaf5;
+}
+
+.main-content .result-stack > .result-card.decision-allow {
+  border-color: #b7cba8;
+  border-top-color: #668d43;
+  background: #fbfaf5;
+}
+
+.main-content .result-stack > .result-card.decision-block {
+  border-color: #dfbbb5;
+  border-top-color: #bd5149;
+  background: #fffaf8;
+}
+
+.main-content .result-stack > .result-card.decision-require_approval {
+  border-color: #ddcca7;
+  border-top-color: #a77c31;
+  background: #fffdf7;
+}
+
+.main-content .result-stack > .result-card h2,
+.main-content .result-stack > .result-card .eyebrow,
+.main-content .result-stack > .result-card .result-reason {
+  color: #30362d;
+}
+
+.main-content .result-stack > .result-card .result-time {
+  color: #646b5f;
+}
+
+.main-content .result-stack > .result-card .matched-rule {
+  border-left-color: #718e43;
+  background: #f0f3e7;
+  color: #424a38;
+}
+
+.main-content .result-stack > .result-card .matched-rule .eyebrow {
+  color: #526638;
+}
+
+.main-content .result-stack > .result-card .result-meta {
+  border-color: #d8d9cf;
+}
+
+.main-content .result-stack > .result-card .result-meta > div {
+  border: 1px solid #d8d9cf;
+  background: #f2f1e9;
+}
+
+.main-content .result-stack > .result-card .result-meta > div > span {
+  color: #60665b;
+}
+
+.main-content .result-stack > .result-card .result-meta code {
+  color: #30362d;
+}
+
+.main-content .result-stack > .result-card .executed-yes {
+  color: #416b37;
+}
+
+.main-content .result-stack > .result-card .executed-no {
+  color: #963f38;
+}
+
+.search-control {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border: 1px solid #c9cbc0;
+  border-radius: 3px;
+  background: #fffefa;
+  color: #62695e;
+}
+
+.search-control > svg {
+  position: static;
+  flex: none;
+  color: #62695e;
+}
+
+.search-control input {
+  width: auto;
+  min-width: 0;
+  flex: 1;
+  padding: 8px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #272c25;
+}
+
+.search-control:focus-within {
+  border-color: #789c35;
+  outline: 2px solid rgb(120 156 53 / 20%);
+  outline-offset: 1px;
+}
+
+.search-control input:focus-visible {
+  outline: none;
+}
+
+.search-control input::placeholder {
+  color: #6b7167;
+  opacity: 1;
+}
+
+@media (max-width: 680px) {
+  .search-control {
+    width: 100%;
+  }
+}

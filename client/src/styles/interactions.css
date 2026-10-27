@@ -1,0 +1,149 @@
+.primary-button {
+  min-height: 40px;
+  border: 1px solid #a2dc3a;
+  border-radius: 3px;
+  background: #b7ff45;
+  color: #20251b;
+  font-size: 11px;
+  font-weight: 800;
+  transition: background-color .15s ease, border-color .15s ease, transform .15s ease;
+}
+.primary-button:hover:not(:disabled) {
+  border-color: #9acb36;
+  background: #a9ed3c;
+  transform: translateY(-1px);
+}
+.outline-button {
+  min-height: 38px;
+  border: 1px solid #c9cbc0;
+  border-radius: 3px;
+  background: #fbfaf5;
+  color: #41473d;
+  font-size: 11px;
+  transition: border-color .15s ease, background-color .15s ease;
+}
+.outline-button:hover:not(:disabled) {
+  border-color: #9ba58a;
+  background: #f2f3e9;
+}
+.text-link {
+  color: #526d2e;
+}
+.request-form,
+.document-agent {
+  color: #41473d;
+}
+.request-form input,
+.request-form select,
+.request-form textarea,
+.note-field input,
+.filter-control select,
+.search-control input,
+.document-agent input {
+  min-height: 39px;
+  border: 1px solid #c9cbc0;
+  border-radius: 3px;
+  background: #fffefa;
+  color: #272c25;
+}
+.request-form input::placeholder,
+.request-form textarea::placeholder,
+.note-field input::placeholder,
+.search-control input::placeholder {
+  color: #95998f;
+}
+.request-form label,
+.note-field {
+  color: #41473d;
+}
+.mono-input {
+  font-size: 11px;
+}
+.untrusted-chip {
+  border: 1px solid #e3d6b9;
+  background: #f7f1e4;
+  color: #81632b;
+}
+.scenario-card {
+  border: 1px solid #e1e2d9;
+  border-radius: 3px;
+  background: #fffefa;
+  transition: border-color .15s ease, background-color .15s ease;
+}
+.scenario-card:hover,
+.scenario-card.selected {
+  border-color: #a5c66c;
+  background: #f5f7ec;
+  box-shadow: none;
+}
+.scenario-id {
+  border-radius: 2px;
+  background: #edf1e4;
+  color: #586c38;
+}
+.scenario-info strong {
+  color: #30362d;
+}
+.scenario-info code {
+  color: #73796e;
+}
+.result-placeholder {
+  min-height: 280px;
+  border-style: dashed;
+  border-color: #c9cbc0;
+  background: #f8f7f0;
+}
+.placeholder-shield {
+  color: #718e43;
+}
+.placeholder-rule {
+  border-color: #dedfd6;
+}
+.result-card {
+  border: 1px solid var(--border);
+  border-top-width: 3px;
+  background: var(--surface);
+}
+.result-card.decision-allow,
+.report-policy-result.decision-allow {
+  border-top-color: #739c4c;
+}
+.result-card.decision-block,
+.report-policy-result.decision-block {
+  border-top-color: #c6534b;
+}
+.result-card.decision-require_approval,
+.report-policy-result.decision-require_approval {
+  border-top-color: #b88632;
+}
+.result-reason {
+  color: #454b42;
+}
+.result-meta > div {
+  border-color: #e1e2d9;
+  background: #f4f3ec;
+}
+.result-meta > div > span,
+.result-time,
+.decision-context {
+  color: #70756c;
+}
+.pipeline {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #f9f8f2;
+}
+.pipeline-step.complete > span {
+  border-color: #9fc56b;
+  background: #eaf2df;
+  color: #526d2e;
+}
+.advisory-card {
+  background: #f0efe7;
+}
+.advisory-label {
+  border: 1px solid #ded8c4;
+  border-radius: 3px;
+  background: #f7f3e9;
+  color: #76663d;
+}
