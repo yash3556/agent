@@ -6,6 +6,7 @@ import type {
   InspectionFinding,
 } from "../types.js";
 import { runDeterministicRegistry } from "./detectors/index.js";
+import { isDocumentationSecretPlaceholder } from "./detectors/credentials.js";
 import { redactSensitiveText } from "./redaction.js";
 
 export interface TextSegment {
@@ -94,7 +95,7 @@ const detectors: Detector[] = [
     ruleId: "aws-access-key-v1",
   },
   {
-    expression: /\b(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|above|earlier)\s+(?:instructions?|rules?|prompts?)\b|\b(?:reveal|disclose|print|output|expose)\s+(?:the\s+)?(?:system\s+prompt|secrets?|credentials?|api\s+keys?)\b|\b(?:bypass|disable|ignore)\s+(?:security|safety|policy|guardrails?)\b|\b(?:hide|conceal|silently|without\s+(?:telling|informing))\b.{0,60}\b(?:user|warning|action|request|tool|data)\b|\b(?:send|upload|forward|exfiltrate)\b.{0,100}\b(?:external|unapproved|attacker|http|https|email|server|endpoint)\b/gi,
+    expression: /\b(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|above|earlier)\s+(?:instructions?|rules?|prompts?)\b|\b(?:reveal|disclose|print|output|expose)\s+(?:the\s+)?(?:system\s+prompt|secrets?|credentials?|api\s+keys?)\b|\b(?:access|open|read|retrieve)\s+(?:the\s+)?(?:private|confidential|restricted)\s+(?:files?|documents?|folders?|directories)\b|\b(?:exfiltrate|steal)\s+(?:the\s+)?(?:all\s+)?(?:data|files?|records?)\b|\b(?:suppress|disable|erase|delete|tamper\s+with)\s+(?:the\s+)?(?:audit|security)\s+(?:logs?|trail|records?)\b|\b(?:bypass|disable|ignore)\s+(?:security|safety|policy|guardrails?)\b|\b(?:hide|conceal|silently|without\s+(?:telling|informing))\b.{0,60}\b(?:user|warning|action|request|tool|data)\b|\b(?:send|upload|forward|exfiltrate)\b.{0,100}\b(?:external|unapproved|attacker|http|https|email|server|endpoint)\b/gi,
     category: "SUSPICIOUS_INSTRUCTION",
     type: "PROMPT_INJECTION_PATTERN",
     severity: "HIGH",
@@ -153,39 +154,59 @@ export function scanText(segments: TextSegment[]): ScanResult {
       ];
       for (const detector of detectors) {
         detector.expression.lastIndex = 0;
-        const match = detector.expression.exec(line);
-        if (!match) continue;
-        if (detector.type === "PHONE_NUMBER" && credentialRanges.some(
-          ({ start, end }) => start < match.index + match[0].length && end > match.index,
-        )) continue;
-        if (detector.category === "CREDENTIAL" && detector.type !== "DATABASE_CONNECTION_STRING" && registryMatches.some(
-          ({ category, start, end }) => category === "CREDENTIAL" && start < match.index + match[0].length && end > match.index,
-        )) continue;
-        totalFindings += 1;
-        bySeverity[detector.severity] += 1;
-        if (findings.length < MAX_REPORTED_FINDINGS) {
-          findings.push({
-            id: `finding_${randomUUID()}`,
-            category: detector.category,
-            type: detector.type,
-            severity: detector.severity,
-            confidence: detector.confidence,
-            location: {
+        const matches = detector.type === "PROMPT_INJECTION_PATTERN"
+          ? Array.from(line.matchAll(detector.expression))
+          : [detector.expression.exec(line)].filter((match): match is RegExpExecArray => match !== null);
+        for (const match of matches) {
+          if (
+            detector.type === "PROMPT_INJECTION_PATTERN"
+            && match[0].toLowerCase() === "ignore previous instructions"
+            && /^["“]?\s*Never\s+$/i.test(line.slice(0, match.index))
+            && /^;\s*instead,\s*follow the approved incident-response runbook\.["”]?(?:\s|$)/i.test(
+              line.slice(match.index + match[0].length),
+            )
+          ) continue;
+          if (
+            detector.ruleId === "credential-assignment-v1"
+            && isDocumentationSecretPlaceholder(match[0].slice(match[0].search(/[:=]/) + 1).trim())
+          ) continue;
+          if (
+            detector.type === "EMAIL_ADDRESS"
+            && match[0].toLowerCase() === "name@example.com"
+            && /\bexample\s+email\s+format:\s*$/i.test(line.slice(0, match.index))
+          ) continue;
+          if (detector.type === "PHONE_NUMBER" && credentialRanges.some(
+            ({ start, end }) => start < match.index + match[0].length && end > match.index,
+          )) continue;
+          if (detector.category === "CREDENTIAL" && detector.type !== "DATABASE_CONNECTION_STRING" && registryMatches.some(
+            ({ category, start, end }) => category === "CREDENTIAL" && start < match.index + match[0].length && end > match.index,
+          )) continue;
+          totalFindings += 1;
+          bySeverity[detector.severity] += 1;
+          if (findings.length < MAX_REPORTED_FINDINGS) {
+            findings.push({
+              id: `finding_${randomUUID()}`,
+              category: detector.category,
+              type: detector.type,
+              severity: detector.severity,
+              confidence: detector.confidence,
+              location: {
+                page: segment.page,
+                line: lineIndex + 1,
+              },
+              evidence: detector.evidence,
+              description: detector.description,
+              ...(detector.ruleId ? { ruleId: detector.ruleId, maskedSample: detector.evidence } : {}),
+            });
+            findingSegments.push(segmentIndex);
+            findingLocations.push({
+              segment: segmentIndex,
               page: segment.page,
               line: lineIndex + 1,
-            },
-            evidence: detector.evidence,
-            description: detector.description,
-            ...(detector.ruleId ? { ruleId: detector.ruleId, maskedSample: detector.evidence } : {}),
-          });
-          findingSegments.push(segmentIndex);
-          findingLocations.push({
-            segment: segmentIndex,
-            page: segment.page,
-            line: lineIndex + 1,
-            start: match.index,
-            end: match.index + match[0].length,
-          });
+              start: match.index,
+              end: match.index + match[0].length,
+            });
+          }
         }
       }
 

@@ -11,6 +11,12 @@ function highEntropy(value: string): boolean {
   return entropy >= 3.5;
 }
 
+export function isDocumentationSecretPlaceholder(value: string): boolean {
+  return /^\$\{[A-Z][A-Z0-9_]*\}$/.test(value)
+    || /^<YOUR_[A-Z0-9_]+>$/i.test(value)
+    || /^(?:YOUR_API_KEY_HERE|<your-secret>)$/i.test(value);
+}
+
 export function detectCredentialSecrets(text: string): DetectorMatch[] {
   const matches: DetectorMatch[] = [];
   const seen = new Set<string>();
@@ -40,7 +46,7 @@ export function detectCredentialSecrets(text: string): DetectorMatch[] {
   add(/\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "JWT_SHAPED", "jwt-shape-v1", 0.94);
   for (const match of text.matchAll(/\b[A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[A-Z0-9_]*\s*=\s*([^\s"'#]{6,})/g)) {
     const value = match[1];
-    if (/^\$\{[A-Z][A-Z0-9_]*\}$/.test(value) || /^<YOUR_[A-Z0-9_]+>$/.test(value)) continue;
+    if (isDocumentationSecretPlaceholder(value)) continue;
     emit(value, (match.index ?? 0) + match[0].lastIndexOf(value), "ENV_SECRET", "env-secret-v1", 0.94);
   }
   for (const match of text.matchAll(/\b(?:key|secret|token|password)\b[^\r\n]{0,24}?([A-Za-z0-9_+\/=-]{20,})/gi)) {

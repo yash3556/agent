@@ -140,9 +140,13 @@ transactional execution or production durability.
   `client_secret`) when the value has at least six non-whitespace characters,
   plus an AWS access-key-like `AKIA` prefix followed by 16 uppercase
   alphanumeric characters. A bare secret-looking string without a recognized
-  label or format is not guaranteed to produce a `CREDENTIAL` finding. This
-  limitation is why a credential-only test must use a supported synthetic
-  pattern, for example `api_key=sample-secret-value`.
+  label or format is not guaranteed to produce a `CREDENTIAL` finding. Exact
+  placeholder values `${NAME}`, `<YOUR_NAME>`, `YOUR_API_KEY_HERE`, and
+  `<your-secret>` are treated as documentation examples; other assignment
+  values remain detectable even when surrounding text says "example", "demo",
+  or "synthetic". An exact `name@example.com` is ignored only after the label
+  `Example email format:`. This limitation is why a credential-only test must
+  use a supported synthetic pattern, for example `api_key=sample-secret-value`.
 - The deterministic `findings` array is capped at 100 entries.
   `summary.truncated` signals a larger detected set and blocks external export.
   The AI report is independently capped at 100 AI findings; a report cap is
