@@ -43,6 +43,7 @@
 | 7 | R-009 | External export inspection has `PERSONAL_DATA` findings and no higher-priority block applies. | `REQUIRE_APPROVAL` | Human approval is required before the synthetic export simulation. | Not while pending; approval re-fetches and rechecks the inspection. |
 | 8 | R-002 | `tool=read_file` and the normalized resource is the exact whitelist entry `public/welcome.txt` under `public/`. | `ALLOW` | The policy permits access to this public resource. | Run the bounded synthetic read only after the initial audit event is saved. |
 | 9 | R-003 | `tool=read_file` and normalized resource starts with `private/`. | `BLOCK` | The request has no authorization to access the private resource. | Never. |
+
 | 10 | R-004 | `tool=export_report` and normalized resource is exactly `sensitive-report`. | `REQUIRE_APPROVAL` | The action is held until a human reviewer approves or rejects it. | Not while pending. On approval, execute only this original synthetic operation once. |
 | 11 | R-999 | Every other combination, including unknown tools, resources, or unlisted reports. | `BLOCK` | No policy permits this action (deny by default). | Never. |
 
