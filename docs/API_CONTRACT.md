@@ -220,9 +220,9 @@ JSON must parse, and CSV quoting must be well formed. The filename does not
 determine the security findings. Files are limited to 5 MiB, extracted text
 to 1 MiB, PDF documents to 100 pages, and DOCX/XLSX archives to 500 entries /
 10 MiB expanded content; XLSX is limited to 100 worksheets. At most three
-inspections per server process are admitted concurrently. Unsupported,
-malformed, encrypted, macro-enabled, embedded, or over-limit documents fail
-closed.
+inspections per server process are admitted concurrently, and parsing is
+limited to 30 seconds per document. Unsupported, malformed, encrypted,
+macro-enabled, embedded, or over-limit documents fail closed.
 
 **201 response**
 

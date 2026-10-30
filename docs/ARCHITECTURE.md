@@ -56,10 +56,10 @@ include the selected mode in the additive `storage` field.
 `POST /api/documents/inspect` accepts one file and `agentId`; the backend
 admits at most three concurrent inspections per process, validates extension,
 declared media type, and content signature/container, then parses in a bounded
-worker and runs deterministic scanning. Text uploads require valid UTF-8,
-JSON syntax and CSV quoting are checked, and XLSX workbook parts and worksheet
-references are validated. When the
-OpenAI-compatible provider is explicitly enabled, only bounded excerpts around
+worker with a 30-second deadline and runs deterministic scanning. Text uploads
+require valid UTF-8, JSON syntax and CSV quoting are checked, and XLSX workbook
+parts and worksheet references are validated. When the OpenAI-compatible
+provider is explicitly enabled, only bounded excerpts around
 deterministic findings are redacted and analyzed; the full extracted document
 is never sent. A counts-only structure summary accompanies those excerpts, and
 the validated result is a separate advisory report.
