@@ -5,6 +5,61 @@ import { MemoryAuditStore } from "../src/config/database.js";
 import { executeSyntheticTool } from "../src/services/tool-simulator.js";
 
 describe("evaluation API", () => {
+  it("allows the production frontend through preflight and keeps CORS headers on API responses", async () => {
+    const frontendOrigin = "https://agent-two-sepia.vercel.app";
+    const app = createApp(new MemoryAuditStore(), { frontendOrigin });
+
+    const preflight = await request(app)
+      .options("/api/evaluate")
+      .set("Origin", frontendOrigin)
+      .set("Access-Control-Request-Method", "POST")
+      .set("Access-Control-Request-Headers", "content-type, authorization");
+
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers["access-control-allow-origin"]).toBe(frontendOrigin);
+    expect(preflight.headers["access-control-allow-methods"]).toContain("POST");
+    expect(preflight.headers["access-control-allow-headers"]).toContain("content-type");
+    expect(preflight.headers["access-control-allow-headers"]).toContain("authorization");
+
+    const evaluation = await request(app)
+      .post("/api/evaluate")
+      .set("Origin", frontendOrigin)
+      .set("Authorization", "Bearer cors-smoke-test")
+      .send({
+        agentId: "demo-agent",
+        tool: "read_file",
+        resource: "private/payroll.csv",
+      });
+
+    expect(evaluation.status).toBe(200);
+    expect(evaluation.headers["access-control-allow-origin"]).toBe(frontendOrigin);
+    expect(evaluation.body).toMatchObject({ decision: "BLOCK", executed: false });
+
+    const validationFailure = await request(app)
+      .post("/api/evaluate")
+      .set("Origin", frontendOrigin)
+      .send({});
+
+    expect(validationFailure.status).toBe(400);
+    expect(validationFailure.headers["access-control-allow-origin"]).toBe(frontendOrigin);
+
+    const parserFailure = await request(app)
+      .post("/api/evaluate")
+      .set("Origin", frontendOrigin)
+      .set("Content-Type", "application/json")
+      .send("{");
+
+    expect(parserFailure.status).toBe(400);
+    expect(parserFailure.headers["access-control-allow-origin"]).toBe(frontendOrigin);
+
+    const routeFailure = await request(app)
+      .get("/api/not-a-route")
+      .set("Origin", frontendOrigin);
+
+    expect(routeFailure.status).toBe(404);
+    expect(routeFailure.headers["access-control-allow-origin"]).toBe(frontendOrigin);
+  });
+
   it("reports service and storage health without exposing internals", async () => {
     const response = await request(createApp(new MemoryAuditStore())).get("/api/health");
     expect(response.status).toBe(200);
